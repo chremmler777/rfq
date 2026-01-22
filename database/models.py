@@ -1,0 +1,426 @@
+"""SQLAlchemy ORM models for RFQ Tool Quoting Software."""
+
+from datetime import datetime
+from typing import Optional, List
+from sqlalchemy import (
+    Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, Table, Enum
+)
+from sqlalchemy.orm import DeclarativeBase, relationship, Mapped, mapped_column
+import enum
+
+
+class Base(DeclarativeBase):
+    """Base class for all models."""
+    pass
+
+
+class RFQStatus(enum.Enum):
+    """Status options for RFQs."""
+    DRAFT = "draft"
+    QUOTED = "quoted"
+    ORDERED = "ordered"
+    CLOSED = "closed"
+
+
+class InjectionSystem(enum.Enum):
+    """Injection system types."""
+    COLD_RUNNER = "cold_runner"
+    HOT_RUNNER = "hot_runner"
+    VALVE_GATE = "valve_gate"
+
+
+class SurfaceFinish(enum.Enum):
+    """Surface finish types."""
+    EDM = "edm"
+    POLISHED = "polished"
+    GRAINED = "grained"
+    TEXTURED = "textured"
+    AS_MACHINED = "as_machined"
+
+
+class ToolType(enum.Enum):
+    """Tool types."""
+    SINGLE = "single"
+    FAMILY = "family"
+
+
+class DegateOption(enum.Enum):
+    """Degate options."""
+    YES = "yes"
+    NO = "no"
+    MAYBE = "maybe"
+
+
+class EOATType(enum.Enum):
+    """EOAT complexity type."""
+    STANDARD = "standard"
+    COMPLEX = "complex"
+
+
+# Junction table for family tools (many-to-many relationship between tools and parts)
+tool_parts = Table(
+    'tool_parts',
+    Base.metadata,
+    Column('tool_id', Integer, ForeignKey('tools.id'), primary_key=True),
+    Column('part_id', Integer, ForeignKey('parts.id'), primary_key=True)
+)
+
+
+class RFQ(Base):
+    """RFQ (Request for Quote) project."""
+    __tablename__ = 'rfqs'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    customer: Mapped[Optional[str]] = mapped_column(String(200))
+    created_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    modified_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    status: Mapped[str] = mapped_column(String(20), default=RFQStatus.DRAFT.value)
+
+    # Demand planning (project-level)
+    demand_sop: Mapped[Optional[int]] = mapped_column(Integer)  # Start of production annual volume
+    demand_sop_date: Mapped[Optional[datetime]] = mapped_column(DateTime)  # SOP start date
+    demand_eaop: Mapped[Optional[int]] = mapped_column(Integer)  # End adjusted operating annual volume
+    demand_eaop_date: Mapped[Optional[datetime]] = mapped_column(DateTime)  # EAOP end date
+    flex_percent: Mapped[Optional[float]] = mapped_column(Float, default=100.0)  # Global flex % capacity
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Relationships
+    parts: Mapped[List["Part"]] = relationship("Part", back_populates="rfq", cascade="all, delete-orphan")
+    annual_demands: Mapped[List["AnnualDemand"]] = relationship("AnnualDemand", back_populates="rfq", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<RFQ(id={self.id}, name='{self.name}', customer='{self.customer}')>"
+
+
+class AnnualDemand(Base):
+    """Annual demand forecast for RFQ project (year-by-year breakdown)."""
+    __tablename__ = 'annual_demands'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rfq_id: Mapped[int] = mapped_column(ForeignKey('rfqs.id'), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)  # Calendar year (e.g., 2026)
+    volume: Mapped[Optional[int]] = mapped_column(Integer)  # Annual volume for this year
+    flex_percent: Mapped[Optional[float]] = mapped_column(Float)  # Max capacity as % (e.g., 100, 80, 110)
+
+    # Relationships
+    rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="annual_demands")
+
+    def __repr__(self):
+        return f"<AnnualDemand(year={self.year}, volume={self.volume}, flex={self.flex_percent}%)>"
+
+
+class Part(Base):
+    """Part within an RFQ."""
+    __tablename__ = 'parts'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rfq_id: Mapped[int] = mapped_column(ForeignKey('rfqs.id'), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    part_number: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Image (binary data stored in DB)
+    image_binary: Mapped[Optional[bytes]] = mapped_column(None)  # Binary image data
+    image_filename: Mapped[Optional[str]] = mapped_column(String(255))  # Original filename
+    image_updated_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # CAD file reference
+    cad_path: Mapped[Optional[str]] = mapped_column(String(500))
+
+    # Physical properties
+    weight_g: Mapped[Optional[float]] = mapped_column(Float)
+    volume_cm3: Mapped[Optional[float]] = mapped_column(Float)
+    projected_area_cm2: Mapped[Optional[float]] = mapped_column(Float)
+    wall_thickness_mm: Mapped[Optional[float]] = mapped_column(Float)
+    wall_thickness_source: Mapped[str] = mapped_column(String(20), default="given")  # "given" or "estimated"
+
+    # Geometry input mode
+    geometry_mode: Mapped[str] = mapped_column(String(20), default="direct")  # "direct" or "box"
+    # For box mode: length × width × effective %
+    box_length_mm: Mapped[Optional[float]] = mapped_column(Float)
+    box_width_mm: Mapped[Optional[float]] = mapped_column(Float)
+    box_effective_percent: Mapped[Optional[float]] = mapped_column(Float, default=100.0)
+
+    # Material
+    material_id: Mapped[Optional[int]] = mapped_column(ForeignKey('materials.id'))
+
+    # Demand planning (part-level; SOP/EAOP moved to RFQ level for consistency)
+    # DEPRECATED: demand_sop and demand_eaop are now at RFQ level - these are kept for backward compatibility only
+    demand_sop: Mapped[Optional[int]] = mapped_column(Integer)  # DEPRECATED: use RFQ.demand_sop
+    demand_eaop: Mapped[Optional[int]] = mapped_column(Integer)  # DEPRECATED: use RFQ.demand_eaop
+    demand_peak: Mapped[Optional[int]] = mapped_column(Integer)  # Peak annual demand (part-specific)
+    parts_over_runtime: Mapped[Optional[int]] = mapped_column(Integer)  # Total lifetime volume (part-specific)
+
+    # Manufacturing options
+    assembly: Mapped[bool] = mapped_column(Boolean, default=False)
+    degate: Mapped[str] = mapped_column(String(10), default=DegateOption.NO.value)
+    overmold: Mapped[bool] = mapped_column(Boolean, default=False)
+    eoat_type: Mapped[str] = mapped_column(String(20), default=EOATType.STANDARD.value)
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    remarks: Mapped[Optional[str]] = mapped_column(Text)  # Sales remarks
+
+    # Relationships
+    rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="parts")
+    material: Mapped[Optional["Material"]] = relationship("Material")
+    tools: Mapped[List["Tool"]] = relationship("Tool", secondary=tool_parts, back_populates="parts")
+    revisions: Mapped[List["PartRevision"]] = relationship("PartRevision", back_populates="part", cascade="all, delete-orphan")
+    sub_boms: Mapped[List["SubBOM"]] = relationship("SubBOM", back_populates="part", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Part(id={self.id}, name='{self.name}', part_number='{self.part_number}')>"
+
+
+class SubBOM(Base):
+    """Sub-BOM item for assemblies and overmolds (child parts with quantities)."""
+    __tablename__ = 'sub_boms'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[int] = mapped_column(ForeignKey('parts.id'), nullable=False)  # Parent part
+
+    # Sub-BOM item details
+    item_name: Mapped[str] = mapped_column(String(200), nullable=False)  # e.g., "Bushing LL5934"
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    item_type: Mapped[str] = mapped_column(String(20), default="assembly")  # "assembly" or "overmold"
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Relationships
+    part: Mapped["Part"] = relationship("Part", back_populates="sub_boms")
+
+    def __repr__(self):
+        return f"<SubBOM(part_id={self.part_id}, item_name='{self.item_name}', qty={self.quantity})>"
+
+
+class PartRevision(Base):
+    """Audit log for part changes."""
+    __tablename__ = 'part_revisions'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[int] = mapped_column(ForeignKey('parts.id'), nullable=False)
+
+    # Change tracking
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    changed_by: Mapped[Optional[str]] = mapped_column(String(100))  # Username or "system"
+
+    # Field that changed
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., "weight_g", "image_filename"
+    old_value: Mapped[Optional[str]] = mapped_column(Text)  # Serialized old value
+    new_value: Mapped[Optional[str]] = mapped_column(Text)  # Serialized new value
+
+    # For image changes, store what changed
+    change_type: Mapped[str] = mapped_column(String(50), default="value")  # "value", "image", "geometry"
+    notes: Mapped[Optional[str]] = mapped_column(Text)  # e.g., "Updated image from v2 to v3"
+
+    # Relationships
+    part: Mapped["Part"] = relationship("Part", back_populates="revisions")
+
+    def __repr__(self):
+        return f"<PartRevision(part_id={self.part_id}, field={self.field_name}, changed_at={self.changed_at})>"
+
+
+class Tool(Base):
+    """Injection molding tool."""
+    __tablename__ = 'tools'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # Tool configuration
+    tool_type: Mapped[str] = mapped_column(String(20), default=ToolType.SINGLE.value)
+    cavities: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Injection system
+    injection_system: Mapped[str] = mapped_column(String(30), default=InjectionSystem.COLD_RUNNER.value)
+    injection_points: Mapped[Optional[int]] = mapped_column(Integer)
+    runner_type: Mapped[Optional[str]] = mapped_column(String(100))  # Specific hot runner type
+
+    # Surface
+    surface_finish: Mapped[str] = mapped_column(String(30), default=SurfaceFinish.AS_MACHINED.value)
+    surface_notes: Mapped[Optional[str]] = mapped_column(String(500))
+
+    # Mechanical features
+    sliders_count: Mapped[int] = mapped_column(Integer, default=0)
+    lifters_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Dimensions (mm)
+    tool_length_mm: Mapped[Optional[float]] = mapped_column(Float)
+    tool_width_mm: Mapped[Optional[float]] = mapped_column(Float)
+    tool_height_mm: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Calculated values
+    estimated_clamping_force_kn: Mapped[Optional[float]] = mapped_column(Float)
+    clamping_force_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+    estimated_injection_pressure_bar: Mapped[Optional[float]] = mapped_column(Float)
+    injection_pressure_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Machine assignment
+    machine_id: Mapped[Optional[int]] = mapped_column(ForeignKey('machines.id'))
+    fits_machine: Mapped[Optional[bool]] = mapped_column(Boolean)
+    fit_issues: Mapped[Optional[str]] = mapped_column(Text)  # Description of fit problems
+
+    # Pricing
+    price_enquiry: Mapped[Optional[float]] = mapped_column(Float)  # Price from supplier quote
+    price_estimated: Mapped[Optional[float]] = mapped_column(Float)  # Our estimate
+    price_final: Mapped[Optional[float]] = mapped_column(Float)  # Final agreed price
+
+    # Supplier info
+    supplier_country: Mapped[Optional[str]] = mapped_column(String(100))
+    supplier_name: Mapped[Optional[str]] = mapped_column(String(200))
+
+    # Complexity
+    complexity_rating: Mapped[Optional[int]] = mapped_column(Integer)  # 1-5 scale
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    # Relationships
+    machine: Mapped[Optional["Machine"]] = relationship("Machine")
+    parts: Mapped[List["Part"]] = relationship("Part", secondary=tool_parts, back_populates="tools")
+
+    def __repr__(self):
+        return f"<Tool(id={self.id}, name='{self.name}', type='{self.tool_type}')>"
+
+
+class Material(Base):
+    """Injection molding material."""
+    __tablename__ = 'materials'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    short_name: Mapped[str] = mapped_column(String(20), nullable=False)
+    family: Mapped[str] = mapped_column(String(50))  # PP, ABS, PA, PC, POM, etc.
+
+    # Physical properties
+    density_g_cm3: Mapped[Optional[float]] = mapped_column(Float)
+    shrinkage_min_percent: Mapped[Optional[float]] = mapped_column(Float)
+    shrinkage_max_percent: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Processing parameters
+    melt_temp_min_c: Mapped[Optional[float]] = mapped_column(Float)
+    melt_temp_max_c: Mapped[Optional[float]] = mapped_column(Float)
+    mold_temp_min_c: Mapped[Optional[float]] = mapped_column(Float)
+    mold_temp_max_c: Mapped[Optional[float]] = mapped_column(Float)
+
+    # For calculations
+    specific_pressure_min_bar: Mapped[Optional[float]] = mapped_column(Float)
+    specific_pressure_max_bar: Mapped[Optional[float]] = mapped_column(Float)
+    flow_length_ratio: Mapped[Optional[float]] = mapped_column(Float)  # Flow length / wall thickness
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    is_preset: Mapped[bool] = mapped_column(Boolean, default=False)  # True for seed data
+
+    def __repr__(self):
+        return f"<Material(id={self.id}, short_name='{self.short_name}', family='{self.family}')>"
+
+    @property
+    def specific_pressure_avg_bar(self) -> Optional[float]:
+        """Average specific pressure for calculations."""
+        if self.specific_pressure_min_bar and self.specific_pressure_max_bar:
+            return (self.specific_pressure_min_bar + self.specific_pressure_max_bar) / 2
+        return self.specific_pressure_min_bar or self.specific_pressure_max_bar
+
+
+class Machine(Base):
+    """Injection molding machine."""
+    __tablename__ = 'machines'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    manufacturer: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Clamping
+    clamping_force_kn: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Injection
+    shot_weight_g: Mapped[Optional[float]] = mapped_column(Float)
+    injection_pressure_bar: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Platen dimensions (mm)
+    platen_width_mm: Mapped[Optional[float]] = mapped_column(Float)
+    platen_height_mm: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Tie bar spacing (mm)
+    tie_bar_spacing_h_mm: Mapped[Optional[float]] = mapped_column(Float)
+    tie_bar_spacing_v_mm: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Mold height (mm)
+    max_mold_height_mm: Mapped[Optional[float]] = mapped_column(Float)
+    min_mold_height_mm: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Opening stroke
+    max_opening_stroke_mm: Mapped[Optional[float]] = mapped_column(Float)
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    is_preset: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def __repr__(self):
+        return f"<Machine(id={self.id}, name='{self.name}', clamping={self.clamping_force_kn}kN)>"
+
+
+class ExistingTool(Base):
+    """Reference database for existing tools (not linked to RFQ)."""
+    __tablename__ = 'existing_tools'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Part characteristics
+    part_type: Mapped[Optional[str]] = mapped_column(String(100))
+    part_weight_g: Mapped[Optional[float]] = mapped_column(Float)
+    part_volume_cm3: Mapped[Optional[float]] = mapped_column(Float)
+    projected_area_cm2: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Tool characteristics
+    complexity_rating: Mapped[Optional[int]] = mapped_column(Integer)  # 1-5
+    cavities: Mapped[int] = mapped_column(Integer, default=1)
+    sliders_count: Mapped[int] = mapped_column(Integer, default=0)
+    lifters_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Surface & tech
+    surface_finish: Mapped[Optional[str]] = mapped_column(String(30))
+    injection_system: Mapped[Optional[str]] = mapped_column(String(30))
+    technology_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Tool dimensions
+    tool_length_mm: Mapped[Optional[float]] = mapped_column(Float)
+    tool_width_mm: Mapped[Optional[float]] = mapped_column(Float)
+    tool_height_mm: Mapped[Optional[float]] = mapped_column(Float)
+    steel_weight_kg: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Supplier & pricing
+    supplier_country: Mapped[Optional[str]] = mapped_column(String(100))
+    supplier_name: Mapped[Optional[str]] = mapped_column(String(200))
+    actual_price: Mapped[Optional[float]] = mapped_column(Float)
+    price_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    currency: Mapped[str] = mapped_column(String(10), default='EUR')
+
+    # Experience
+    issues: Mapped[Optional[str]] = mapped_column(Text)
+    lessons_learned: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Files
+    image_path: Mapped[Optional[str]] = mapped_column(String(500))
+
+    # Filtering
+    tags: Mapped[Optional[str]] = mapped_column(String(500))  # Comma-separated tags
+
+    created_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<ExistingTool(id={self.id}, name='{self.name}', price={self.actual_price})>"
+
+    def get_tags_list(self) -> List[str]:
+        """Return tags as a list."""
+        if self.tags:
+            return [t.strip() for t in self.tags.split(',') if t.strip()]
+        return []
+
+    def set_tags_list(self, tags: List[str]):
+        """Set tags from a list."""
+        self.tags = ', '.join(tags) if tags else None
+
+
+# Alias for junction table
+ToolPart = tool_parts
