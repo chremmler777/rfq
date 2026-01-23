@@ -377,29 +377,21 @@ class PartDialog(QDialog):
         self.assembly_check.toggled.connect(self._on_assembly_toggled)
         mfg_row1.addWidget(self.assembly_check)
 
-        mfg_row1.addWidget(QLabel("Degate"))
-        self.degate_combo = QComboBox()
-        self.degate_combo.addItems([d.value for d in DegateOption])
-        if self.part:
-            self.degate_combo.setCurrentText(self.part.degate)
-        mfg_row1.addWidget(self.degate_combo)
-
         self.overmold_check = QCheckBox("Overmold")
         self.overmold_check.setChecked(self.part.overmold if self.part else False)
         self.overmold_check.toggled.connect(self._on_overmold_toggled)
         mfg_row1.addWidget(self.overmold_check)
 
+        mfg_row1.addStretch()
         mfg_layout.addLayout(mfg_row1)
 
-        mfg_row2 = QHBoxLayout()
-        mfg_row2.addWidget(QLabel("EOAT Type"))
-        self.eoat_combo = QComboBox()
-        self.eoat_combo.addItems([e.value for e in EOATType])
-        if self.part:
-            self.eoat_combo.setCurrentText(self.part.eoat_type)
-        mfg_row2.addWidget(self.eoat_combo)
-        mfg_row2.addStretch()
-        mfg_layout.addLayout(mfg_row2)
+        # V2.0: Degate and EOAT moved to Tool level
+        info_label = QLabel(
+            "<i>Note: Degate and EOAT Type are now configured at the tool level (in the Tool dialog), "
+            "not per-part. This allows better control when multiple parts share a tool.</i>"
+        )
+        info_label.setWordWrap(True)
+        mfg_layout.addWidget(info_label)
 
         mfg_group.setLayout(mfg_layout)
         layout.addWidget(mfg_group)
@@ -769,7 +761,7 @@ class PartDialog(QDialog):
                     if part.image_filename != self.image_filename:
                         changes.append(("image_filename", part.image_filename or "None", self.image_filename or "None"))
 
-                    # Update all fields
+                    # Update all fields (excluding degate and eoat_type - moved to tool level in V2.0)
                     part.name = name
                     part.part_number = self.part_number_input.text().strip() or None
                     part.material_id = material_id
@@ -782,9 +774,8 @@ class PartDialog(QDialog):
                     # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                     part.parts_over_runtime = self.demand_peak_spin.value() or None
                     part.assembly = self.assembly_check.isChecked()
-                    part.degate = self.degate_combo.currentText()
                     part.overmold = self.overmold_check.isChecked()
-                    part.eoat_type = self.eoat_combo.currentText()
+                    # V2.0: degate and eoat_type are now at tool level
                     part.notes = self.notes_input.toPlainText().strip() or None
                     part.remarks = self.remarks_input.toPlainText().strip() or None
                     part.geometry_mode = geometry_mode
@@ -828,9 +819,8 @@ class PartDialog(QDialog):
                         # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                         parts_over_runtime=self.demand_peak_spin.value() or None,
                         assembly=self.assembly_check.isChecked(),
-                        degate=self.degate_combo.currentText(),
                         overmold=self.overmold_check.isChecked(),
-                        eoat_type=self.eoat_combo.currentText(),
+                        # V2.0: degate and eoat_type are now at tool level
                         notes=self.notes_input.toPlainText().strip() or None,
                         remarks=self.remarks_input.toPlainText().strip() or None,
                         geometry_mode=geometry_mode,

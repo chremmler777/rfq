@@ -95,6 +95,64 @@ def calculate_injection_pressure(
     return base_pressure_bar
 
 
+def calculate_clamping_force_for_tool(
+    tool,  # Tool model instance
+    material,  # Material model instance
+    manual_pressure_override_bar: Optional[float] = None,
+    safety_factor: float = DEFAULT_SAFETY_FACTOR
+) -> tuple:
+    """Calculate clamping force for a multi-part tool.
+
+    Supports:
+    - Multiple parts with different cavities per part
+    - Manual pressure override (e.g., 750 bar instead of material's 500-700)
+    - ToolPartConfiguration for detailed part assignments
+
+    Args:
+        tool: Tool model instance (may have ToolPartConfiguration)
+        material: Material model instance with specific_pressure fields
+        manual_pressure_override_bar: Override pressure in bar (e.g., 750)
+        safety_factor: Safety factor
+
+    Returns:
+        Tuple of (force_kn, notes) where notes explains the calculation
+    """
+    # Determine pressure to use
+    if manual_pressure_override_bar:
+        pressure = manual_pressure_override_bar
+        pressure_source = f"manual override ({pressure} bar)"
+    else:
+        pressure = material.specific_pressure_avg_bar
+        pressure_source = f"material avg ({material.specific_pressure_min_bar}-{material.specific_pressure_max_bar} bar)"
+
+    if pressure is None:
+        return None, "No pressure data available"
+
+    # Calculate force from part configurations or legacy cavities
+    total_force = 0.0
+    breakdown = []
+
+    if tool.part_configurations:
+        # New path: sum force from each part configuration
+        for pc in tool.part_configurations:
+            if pc.part and pc.part.projected_area_cm2:
+                part_force = calculate_clamping_force(
+                    pc.part.projected_area_cm2,
+                    pressure,
+                    pc.cavities,
+                    safety_factor
+                )
+                total_force += part_force
+                breakdown.append(f"{pc.part.name} ({pc.cavities}x): {part_force} kN")
+    else:
+        # Legacy path: use tool-level cavities (single part tool)
+        # This requires passing projected area separately - return None
+        return None, "Tool has no part configurations. Use legacy calculation."
+
+    notes = f"Pressure source: {pressure_source}\n" + "\n".join(breakdown)
+    return round(total_force, 1), notes
+
+
 def recommend_machine_size(clamping_force_kn: float) -> str:
     """Recommend machine size based on clamping force.
 

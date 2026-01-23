@@ -57,13 +57,65 @@ class EOATType(enum.Enum):
     COMPLEX = "complex"
 
 
-# Junction table for family tools (many-to-many relationship between tools and parts)
+class NozzleType(enum.Enum):
+    """Injection nozzle types for tools."""
+    HEATED_SPRUE = "heated_sprue"
+    HOT_RUNNER = "hot_runner"
+    NEEDLE_VALVE = "needle_valve"
+    DIRECT_INJECTION = "direct_injection"
+    SUBGATED = "subgated"
+    COLD_RUNNER = "cold_runner"
+
+
+# Legacy junction table for family tools (kept for backwards compatibility)
+# New code should use ToolPartConfiguration for more detailed tool-part relationships
 tool_parts = Table(
     'tool_parts',
     Base.metadata,
     Column('tool_id', Integer, ForeignKey('tools.id'), primary_key=True),
     Column('part_id', Integer, ForeignKey('parts.id'), primary_key=True)
 )
+
+
+class ToolPartConfiguration(Base):
+    """Detailed tool-part configuration for family tools and multi-cavity setups.
+
+    This model provides:
+    - Per-part cavity count within a tool
+    - Per-part lifters/sliders (summed for tool totals)
+    - Configuration groups for alternative setups (OR logic)
+    - Position tracking for layout
+    """
+    __tablename__ = 'tool_part_configurations'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool_id: Mapped[int] = mapped_column(ForeignKey('tools.id'), nullable=False)
+    part_id: Mapped[int] = mapped_column(ForeignKey('parts.id'), nullable=False)
+
+    # Cavities for THIS part within the tool
+    cavities: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Per-part mechanical features (aggregated for tool totals)
+    lifters_count: Mapped[int] = mapped_column(Integer, default=0)
+    sliders_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Configuration groups for alternative setups:
+    # - Parts with same config_group_id = OR (alternatives, only one group runs at a time)
+    # - Parts with different/null config_group_id = AND (run together)
+    config_group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Layout position within the tool (for visualization)
+    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Additional notes for this part configuration
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Relationships
+    tool: Mapped["Tool"] = relationship("Tool", back_populates="part_configurations")
+    part: Mapped["Part"] = relationship("Part", back_populates="tool_configurations")
+
+    def __repr__(self):
+        return f"<ToolPartConfig(tool_id={self.tool_id}, part_id={self.part_id}, cav={self.cavities})>"
 
 
 class RFQ(Base):
@@ -165,6 +217,9 @@ class Part(Base):
     rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="parts")
     material: Mapped[Optional["Material"]] = relationship("Material")
     tools: Mapped[List["Tool"]] = relationship("Tool", secondary=tool_parts, back_populates="parts")
+    tool_configurations: Mapped[List["ToolPartConfiguration"]] = relationship(
+        "ToolPartConfiguration", back_populates="part", cascade="all, delete-orphan"
+    )
     revisions: Mapped[List["PartRevision"]] = relationship("PartRevision", back_populates="part", cascade="all, delete-orphan")
     sub_boms: Mapped[List["SubBOM"]] = relationship("SubBOM", back_populates="part", cascade="all, delete-orphan")
 
@@ -228,18 +283,26 @@ class Tool(Base):
 
     # Tool configuration
     tool_type: Mapped[str] = mapped_column(String(20), default=ToolType.SINGLE.value)
-    cavities: Mapped[int] = mapped_column(Integer, default=1)
+    cavities: Mapped[int] = mapped_column(Integer, default=1)  # Total cavities (legacy, sum from configs)
 
     # Injection system
     injection_system: Mapped[str] = mapped_column(String(30), default=InjectionSystem.COLD_RUNNER.value)
     injection_points: Mapped[Optional[int]] = mapped_column(Integer)
     runner_type: Mapped[Optional[str]] = mapped_column(String(100))  # Specific hot runner type
 
+    # V2.0: Enhanced injection configuration
+    nozzle_type: Mapped[str] = mapped_column(String(30), default=NozzleType.COLD_RUNNER.value)
+    hot_runner_nozzle_count: Mapped[int] = mapped_column(Integer, default=0)  # Number of hot runner nozzles
+
+    # V2.0: Manufacturing options moved from Part level
+    degate: Mapped[str] = mapped_column(String(10), default=DegateOption.NO.value)
+    eoat_type: Mapped[str] = mapped_column(String(20), default=EOATType.STANDARD.value)
+
     # Surface
     surface_finish: Mapped[str] = mapped_column(String(30), default=SurfaceFinish.AS_MACHINED.value)
     surface_notes: Mapped[Optional[str]] = mapped_column(String(500))
 
-    # Mechanical features
+    # Mechanical features (legacy - totals; detailed per-part in ToolPartConfiguration)
     sliders_count: Mapped[int] = mapped_column(Integer, default=0)
     lifters_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -253,6 +316,12 @@ class Tool(Base):
     clamping_force_manual: Mapped[bool] = mapped_column(Boolean, default=False)
     estimated_injection_pressure_bar: Mapped[Optional[float]] = mapped_column(Float)
     injection_pressure_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # V2.0: Manual pressure override for clamping calculation (e.g., 750 bar instead of material's 500-700)
+    manual_pressure_bar: Mapped[Optional[float]] = mapped_column(Float)
+
+    # V2.0: Shot volume tracking
+    total_shot_volume_cm3: Mapped[Optional[float]] = mapped_column(Float)  # Sum of (part.vol × cav) + runner
 
     # Machine assignment
     machine_id: Mapped[Optional[int]] = mapped_column(ForeignKey('machines.id'))
@@ -277,9 +346,45 @@ class Tool(Base):
     # Relationships
     machine: Mapped[Optional["Machine"]] = relationship("Machine")
     parts: Mapped[List["Part"]] = relationship("Part", secondary=tool_parts, back_populates="tools")
+    part_configurations: Mapped[List["ToolPartConfiguration"]] = relationship(
+        "ToolPartConfiguration", back_populates="tool", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Tool(id={self.id}, name='{self.name}', type='{self.tool_type}')>"
+
+    def get_total_cavities(self) -> int:
+        """Calculate total cavities from part configurations."""
+        if self.part_configurations:
+            return sum(pc.cavities for pc in self.part_configurations)
+        return self.cavities
+
+    def get_total_lifters(self) -> int:
+        """Calculate total lifters from part configurations."""
+        if self.part_configurations:
+            return sum(pc.lifters_count for pc in self.part_configurations)
+        return self.lifters_count
+
+    def get_total_sliders(self) -> int:
+        """Calculate total sliders from part configurations."""
+        if self.part_configurations:
+            return sum(pc.sliders_count for pc in self.part_configurations)
+        return self.sliders_count
+
+    def has_alternative_configs(self) -> bool:
+        """Check if tool has alternative configuration groups."""
+        if not self.part_configurations:
+            return False
+        groups = set(pc.config_group_id for pc in self.part_configurations if pc.config_group_id is not None)
+        return len(groups) > 1
+
+    def is_defined(self) -> bool:
+        """Check if tool has parts assigned (is defined)."""
+        return bool(self.part_configurations and len(self.part_configurations) > 0)
+
+    def get_parts_count(self) -> int:
+        """Get number of parts assigned to this tool."""
+        return len(self.part_configurations) if self.part_configurations else 0
 
 
 class Material(Base):
@@ -336,6 +441,11 @@ class Machine(Base):
     shot_weight_g: Mapped[Optional[float]] = mapped_column(Float)
     injection_pressure_bar: Mapped[Optional[float]] = mapped_column(Float)
 
+    # V2.0: Barrel and screw specs for shot volume and ratio calculations
+    barrel_volume_cm3: Mapped[Optional[float]] = mapped_column(Float)  # For barrel usage % calculation
+    screw_diameter_mm: Mapped[Optional[float]] = mapped_column(Float)  # For stroke/diameter ratio
+    max_injection_stroke_mm: Mapped[Optional[float]] = mapped_column(Float)  # For stroke/diameter ratio
+
     # Platen dimensions (mm)
     platen_width_mm: Mapped[Optional[float]] = mapped_column(Float)
     platen_height_mm: Mapped[Optional[float]] = mapped_column(Float)
@@ -356,6 +466,12 @@ class Machine(Base):
 
     def __repr__(self):
         return f"<Machine(id={self.id}, name='{self.name}', clamping={self.clamping_force_kn}kN)>"
+
+    def get_screw_ratio(self) -> Optional[float]:
+        """Calculate stroke/diameter ratio (optimal range: 1.0-2.8)."""
+        if self.max_injection_stroke_mm and self.screw_diameter_mm and self.screw_diameter_mm > 0:
+            return self.max_injection_stroke_mm / self.screw_diameter_mm
+        return None
 
 
 class ExistingTool(Base):

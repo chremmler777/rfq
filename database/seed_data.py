@@ -75,6 +75,9 @@ def seed_machines(session):
             clamping_force_kn=mach_data.get('clamping_force_kn'),
             shot_weight_g=mach_data.get('shot_weight_g'),
             injection_pressure_bar=mach_data.get('injection_pressure_bar'),
+            barrel_volume_cm3=mach_data.get('barrel_volume_cm3'),  # V2.0
+            screw_diameter_mm=mach_data.get('screw_diameter_mm'),  # V2.0
+            max_injection_stroke_mm=mach_data.get('max_injection_stroke_mm'),  # V2.0
             platen_width_mm=mach_data.get('platen_width_mm'),
             platen_height_mm=mach_data.get('platen_height_mm'),
             tie_bar_spacing_h_mm=mach_data.get('tie_bar_spacing_h_mm'),
