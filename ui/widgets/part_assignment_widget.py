@@ -3,14 +3,15 @@
 from typing import List, Dict, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QSpinBox, QHeaderView, QMessageBox, QComboBox,
+    QPushButton, QLabel, QSpinBox, QHeaderView, QMessageBox,
     QAbstractItemView
 )
 from PyQt6.QtCore import Qt
 
 from database import ToolPartConfiguration
 from database.connection import session_scope
-from database.models import Part, RFQ
+from database.models import Part
+from ..dialogs.part_selection_dialog import PartSelectionDialog
 
 
 class PartAssignmentWidget(QWidget):
@@ -23,42 +24,33 @@ class PartAssignmentWidget(QWidget):
         self.on_config_changed = on_config_changed  # Callback when parts change
 
         self._setup_ui()
-        self._load_available_parts()
 
     def _setup_ui(self):
         """Setup the UI layout."""
         layout = QVBoxLayout(self)
 
-        # Available parts list (left side)
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(QLabel("Available Parts (from BOM):"))
+        # Configuration inputs (for the part to be added)
+        config_label = QLabel("Configuration (for next part to add):")
+        config_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(config_label)
 
-        self.available_parts_combo = QComboBox()
-        self.available_parts_combo.addItem("- Select a part -", None)
-        left_layout.addWidget(self.available_parts_combo)
-
-        # Configuration inputs (for the selected part)
-        config_layout = QVBoxLayout()
-        config_layout.addWidget(QLabel("Configuration:"))
-
-        cav_layout = QHBoxLayout()
-        cav_layout.addWidget(QLabel("Cavities:"))
+        # Cavities and Lifters on same row
+        cav_lift_layout = QHBoxLayout()
+        cav_lift_layout.addWidget(QLabel("Cavities:"))
         self.cavities_spin = QSpinBox()
         self.cavities_spin.setRange(1, 100)
         self.cavities_spin.setValue(1)
-        cav_layout.addWidget(self.cavities_spin)
-        cav_layout.addStretch()
-        config_layout.addLayout(cav_layout)
-
-        lift_layout = QHBoxLayout()
-        lift_layout.addWidget(QLabel("Lifters:"))
+        cav_lift_layout.addWidget(self.cavities_spin)
+        cav_lift_layout.addSpacing(20)
+        cav_lift_layout.addWidget(QLabel("Lifters:"))
         self.lifters_spin = QSpinBox()
         self.lifters_spin.setRange(0, 50)
         self.lifters_spin.setValue(0)
-        lift_layout.addWidget(self.lifters_spin)
-        lift_layout.addStretch()
-        config_layout.addLayout(lift_layout)
+        cav_lift_layout.addWidget(self.lifters_spin)
+        cav_lift_layout.addStretch()
+        layout.addLayout(cav_lift_layout)
 
+        # Sliders on its own row
         sld_layout = QHBoxLayout()
         sld_layout.addWidget(QLabel("Sliders:"))
         self.sliders_spin = QSpinBox()
@@ -66,131 +58,93 @@ class PartAssignmentWidget(QWidget):
         self.sliders_spin.setValue(0)
         sld_layout.addWidget(self.sliders_spin)
         sld_layout.addStretch()
-        config_layout.addLayout(sld_layout)
+        layout.addLayout(sld_layout)
 
-        grp_layout = QHBoxLayout()
-        grp_layout.addWidget(QLabel("Config Group (for OR):"))
-        self.config_group_spin = QSpinBox()
-        self.config_group_spin.setRange(0, 10)
-        self.config_group_spin.setValue(0)
-        grp_layout.addWidget(self.config_group_spin)
-        grp_layout.addStretch()
-        config_layout.addLayout(grp_layout)
+        # Select part button
+        self.btn_select_part = QPushButton("Select Part from BOM...")
+        self.btn_select_part.clicked.connect(self._on_select_part_clicked)
+        layout.addWidget(self.btn_select_part)
 
-        left_layout.addLayout(config_layout)
+        layout.addSpacing(15)
 
-        # Add button
-        self.btn_add = QPushButton("Add Part →")
-        self.btn_add.clicked.connect(self._on_add_part)
-        left_layout.addWidget(self.btn_add)
+        # Separator
+        separator = QLabel("─" * 60)
+        separator.setStyleSheet("color: #cccccc;")
+        layout.addWidget(separator)
 
-        left_layout.addStretch()
+        layout.addSpacing(5)
 
-        # Assigned parts table (right side)
-        right_layout = QVBoxLayout()
-        right_layout.addWidget(QLabel("Assigned to Tool:"))
+        # Assigned parts table
+        assigned_label = QLabel("Assigned to This Tool:")
+        assigned_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(assigned_label)
 
         self.assignments_table = QTableWidget()
-        self.assignments_table.setColumnCount(6)
-        self.assignments_table.setHorizontalHeaderLabels(["Part", "Cavities", "Lifters", "Sliders", "Group", ""])
+        self.assignments_table.setColumnCount(5)
+        self.assignments_table.setHorizontalHeaderLabels(["Part", "Cavities", "Lifters", "Sliders", ""])
         self.assignments_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.assignments_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.assignments_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.assignments_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.assignments_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.assignments_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assignments_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        right_layout.addWidget(self.assignments_table)
+        layout.addWidget(self.assignments_table)
 
         # Remove button
         self.btn_remove = QPushButton("← Remove Selected")
         self.btn_remove.clicked.connect(self._on_remove_part)
-        right_layout.addWidget(self.btn_remove)
+        layout.addWidget(self.btn_remove)
 
         # Totals display
         self.totals_label = QLabel("Totals: 0 cavities, 0 lifters, 0 sliders")
         self.totals_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #f0f0f0;")
-        right_layout.addWidget(self.totals_label)
+        layout.addWidget(self.totals_label)
 
-        # Main horizontal layout
-        main_layout = QHBoxLayout()
-        main_layout.addLayout(left_layout, 0)
-        main_layout.addLayout(right_layout, 1)
+    def _on_select_part_clicked(self):
+        """Open part selection dialog and add selected part to assignments."""
+        # Get currently assigned part IDs
+        assigned_ids = [c['part_id'] for c in self.part_configs]
 
-        layout.addLayout(main_layout)
+        # Open part selection dialog
+        dialog = PartSelectionDialog(self.rfq_id, assigned_ids, self)
+        if dialog.exec() == PartSelectionDialog.DialogCode.Accepted:
+            selected_part_id = dialog.get_selected_part_id()
+            if selected_part_id:
+                # Load part details from database
+                with session_scope() as session:
+                    part = session.query(Part).get(selected_part_id)
+                    if part:
+                        part_name = part.name
+                    else:
+                        QMessageBox.warning(self, "Error", "Could not load part details")
+                        return
 
-    def _load_available_parts(self):
-        """Load available parts from RFQ, greying out already assigned ones."""
-        with session_scope() as session:
-            parts = session.query(Part).filter(Part.rfq_id == self.rfq_id).order_by(Part.name).all()
+                # Get configuration from spinboxes
+                cavities = self.cavities_spin.value()
+                lifters = self.lifters_spin.value()
+                sliders = self.sliders_spin.value()
 
-            # Separate assigned and unassigned parts
-            assigned_parts = []
-            unassigned_parts = []
+                # Check for duplicates
+                for config in self.part_configs:
+                    if config['part_id'] == selected_part_id:
+                        QMessageBox.warning(self, "Duplicate", f"'{part_name}' is already assigned")
+                        return
 
-            for part in parts:
-                # Check if already in our config list
-                is_in_config = any(c['part_id'] == part.id for c in self.part_configs)
+                # Add to configuration list
+                self.part_configs.append({
+                    'part_id': selected_part_id,
+                    'part_name': part_name,
+                    'cavities': cavities,
+                    'lifters_count': lifters,
+                    'sliders_count': sliders,
+                    'config_group_id': None  # Reserved for future alternative configurations
+                })
 
-                if is_in_config:
-                    assigned_parts.append(part)
-                else:
-                    unassigned_parts.append(part)
+                self._refresh_assignments_table()
 
-            # Add unassigned parts first (normal)
-            for part in unassigned_parts:
-                self.available_parts_combo.addItem(part.name, part.id)
-
-            # Add separator
-            if assigned_parts:
-                self.available_parts_combo.insertSeparator(self.available_parts_combo.count())
-
-            # Add assigned parts (greyed out)
-            for part in assigned_parts:
-                index = self.available_parts_combo.count()
-                self.available_parts_combo.addItem(f"✓ {part.name} (assigned)", part.id)
-                # Make the item disabled/greyed
-                model = self.available_parts_combo.model()
-                item = model.item(index)
-                from PyQt6.QtGui import QColor
-                item.setForeground(QColor("#999999"))
-                item.setEnabled(False)
-
-    def _on_add_part(self):
-        """Add selected part to assignments."""
-        part_id = self.available_parts_combo.currentData()
-        if part_id is None:
-            QMessageBox.warning(self, "No Selection", "Please select a part")
-            return
-
-        part_name = self.available_parts_combo.currentText()
-        cavities = self.cavities_spin.value()
-        lifters = self.lifters_spin.value()
-        sliders = self.sliders_spin.value()
-        config_group = self.config_group_spin.value() or None
-
-        # Check for duplicates
-        for config in self.part_configs:
-            if config['part_id'] == part_id:
-                QMessageBox.warning(self, "Duplicate", f"'{part_name}' is already assigned")
-                return
-
-        # Add to list
-        self.part_configs.append({
-            'part_id': part_id,
-            'part_name': part_name,
-            'cavities': cavities,
-            'lifters_count': lifters,
-            'sliders_count': sliders,
-            'config_group_id': config_group
-        })
-
-        self._refresh_assignments_table()
-        self._refresh_parts_list()  # Update combo list with greyed out
-
-        # Trigger callback if set
-        if self.on_config_changed:
-            self.on_config_changed()
+                # Trigger callback if set
+                if self.on_config_changed:
+                    self.on_config_changed()
 
     def _on_remove_part(self):
         """Remove selected part from assignments."""
@@ -203,22 +157,10 @@ class PartAssignmentWidget(QWidget):
         if 0 <= row < len(self.part_configs):
             self.part_configs.pop(row)
             self._refresh_assignments_table()
-            self._refresh_parts_list()  # Update combo list (ungreyed)
 
             # Trigger callback if set
             if self.on_config_changed:
                 self.on_config_changed()
-
-    def _refresh_parts_list(self):
-        """Refresh the available parts combo (move assigned to bottom, grey out)."""
-        # Temporarily disconnect signal to avoid triggering during rebuild
-        self.available_parts_combo.blockSignals(True)
-
-        # Clear and rebuild
-        self.available_parts_combo.clear()
-        self._load_available_parts()
-
-        self.available_parts_combo.blockSignals(False)
 
     def _refresh_assignments_table(self):
         """Refresh the assignments table display."""
@@ -233,9 +175,6 @@ class PartAssignmentWidget(QWidget):
             self.assignments_table.setItem(row, 1, QTableWidgetItem(str(config['cavities'])))
             self.assignments_table.setItem(row, 2, QTableWidgetItem(str(config['lifters_count'])))
             self.assignments_table.setItem(row, 3, QTableWidgetItem(str(config['sliders_count'])))
-
-            group_text = str(config['config_group_id']) if config['config_group_id'] else "-"
-            self.assignments_table.setItem(row, 4, QTableWidgetItem(group_text))
 
             total_cavities += config['cavities']
             total_lifters += config['lifters_count']

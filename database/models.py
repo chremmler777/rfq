@@ -31,11 +31,12 @@ class InjectionSystem(enum.Enum):
 
 class SurfaceFinish(enum.Enum):
     """Surface finish types."""
+    DRAW_POLISH = "draw_polish"
+    POLISH = "polish"
+    HIGH_POLISH = "high_polish"
+    GRAIN = "grain"
+    TECHNICAL_POLISH = "technical_polish"
     EDM = "edm"
-    POLISHED = "polished"
-    GRAINED = "grained"
-    TEXTURED = "textured"
-    AS_MACHINED = "as_machined"
 
 
 class ToolType(enum.Enum):
@@ -85,6 +86,26 @@ class ToolPartConfiguration(Base):
     - Per-part lifters/sliders (summed for tool totals)
     - Configuration groups for alternative setups (OR logic)
     - Position tracking for layout
+
+    Alternative Tool Configurations (Future Feature):
+    -----------------------------------------------
+    The config_group_id field is intended to support OR logic for alternative
+    tool configurations. Example use case:
+
+    Tool 1 can run EITHER:
+    - Option A: 4 cavities of Part1 + 2 cavities of Part2 (config_group_id=1)
+    - Option B: 2 cavities of Part3 (config_group_id=2)
+
+    Parts with the same config_group_id run together (AND logic).
+    Parts with different config_group_id values are alternatives (OR logic).
+    Parts with NULL config_group_id are always included (base configuration).
+
+    UI Implementation TODO:
+    - Add UI to create/edit alternative configurations
+    - Add visual indicator (🔀 badge) when tool has alternatives
+    - Add dialog to select which configuration to view/calculate
+    - Update calculations to handle alternative config scenarios
+    - Export to Excel should show all alternatives with separate rows
     """
     __tablename__ = 'tool_part_configurations'
 
@@ -185,7 +206,7 @@ class Part(Base):
     volume_cm3: Mapped[Optional[float]] = mapped_column(Float)
     projected_area_cm2: Mapped[Optional[float]] = mapped_column(Float)
     wall_thickness_mm: Mapped[Optional[float]] = mapped_column(Float)
-    wall_thickness_source: Mapped[str] = mapped_column(String(20), default="given")  # "given" or "estimated"
+    wall_thickness_source: Mapped[str] = mapped_column(String(20), default="data")  # "data", "bom", or "estimated"
 
     # Geometry input mode
     geometry_mode: Mapped[str] = mapped_column(String(20), default="direct")  # "direct" or "box"
@@ -212,6 +233,15 @@ class Part(Base):
 
     notes: Mapped[Optional[str]] = mapped_column(Text)
     remarks: Mapped[Optional[str]] = mapped_column(Text)  # Sales remarks
+
+    # Surface finish (V2.0)
+    surface_finish: Mapped[Optional[str]] = mapped_column(String(30))
+    surface_finish_detail: Mapped[Optional[str]] = mapped_column(String(200))
+    surface_finish_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Geometry source tracking (V2.0)
+    projected_area_source: Mapped[str] = mapped_column(String(20), default="data")  # "data", "bom", "estimated"
+    wall_thickness_needs_improvement: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
     rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="parts")
@@ -299,7 +329,7 @@ class Tool(Base):
     eoat_type: Mapped[str] = mapped_column(String(20), default=EOATType.STANDARD.value)
 
     # Surface
-    surface_finish: Mapped[str] = mapped_column(String(30), default=SurfaceFinish.AS_MACHINED.value)
+    surface_finish: Mapped[str] = mapped_column(String(30), default=SurfaceFinish.EDM.value)
     surface_notes: Mapped[Optional[str]] = mapped_column(String(500))
 
     # Mechanical features (legacy - totals; detailed per-part in ToolPartConfiguration)

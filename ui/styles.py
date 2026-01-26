@@ -151,6 +151,9 @@ COLORS = {
     'error': '#FF5050',    # Red
     'info': '#4472C4',     # Blue
     'neutral': '#808080',  # Gray
+    'estimated_bg': '#FFD54F',  # Vibrant yellow for estimated values
+    'bom_sourced_bg': '#64B5F6',  # Vibrant blue for BOM sourced values
+    'missing_row_bg': '#FFE0E0',  # Light red for incomplete rows
 }
 
 # Complexity rating colors

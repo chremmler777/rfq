@@ -13,6 +13,7 @@ from database.connection import session_scope
 from database.models import RFQ, Part, Tool, Material, Machine, ToolPartConfiguration
 from .dialogs.part_dialog import PartDialog
 from .dialogs.tool_dialog import ToolDialog
+from .widgets.image_preview import show_image_preview
 
 
 class RFQDetailWindow(QMainWindow):
@@ -111,13 +112,13 @@ class RFQDetailWindow(QMainWindow):
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        # Parts table
+        # Parts table (V2.0: added Surface Finish and Status columns)
         self.parts_table = QTableWidget()
-        self.parts_table.setColumnCount(14)
+        self.parts_table.setColumnCount(16)
         self.parts_table.setHorizontalHeaderLabels([
             "Name", "Part#", "Image", "Material", "Weight (g)", "Volume (cm³)",
-            "Proj. Area\n(cm²)", "Wall-\nthickness\n(mm)", "Total\nDemand", "Tool\nDefined",
-            "Assembly\nDefined", "Over-\nmolding", "Notes"
+            "Proj. Area\n(cm²)", "Wall-\nthickness\n(mm)", "Surface\nFinish", "Total\nDemand", "Tool\nDefined",
+            "Assembly\nDefined", "Over-\nmolding", "Status", "Notes"
         ])
         self.parts_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.parts_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
@@ -196,7 +197,9 @@ class RFQDetailWindow(QMainWindow):
         self._update_calculations()
 
     def _load_parts_table(self):
-        """Load parts into BOM table with tool assignment status."""
+        """Load parts into BOM table with tool assignment status and color coding (V2.0)."""
+        from ui.color_coding import get_missing_fields, get_source_color, apply_source_color_to_table_item
+
         with session_scope() as session:
             rfq = session.query(RFQ).get(self.rfq_id)
             if not rfq:
@@ -206,8 +209,21 @@ class RFQDetailWindow(QMainWindow):
             self.parts_table.setRowCount(len(parts))
 
             for row, part in enumerate(parts):
-                self.parts_table.setItem(row, 0, QTableWidgetItem(part.name))
-                self.parts_table.setItem(row, 1, QTableWidgetItem(part.part_number or "-"))
+                # Check completeness for row coloring
+                missing = get_missing_fields(part)
+                is_complete = len(missing) == 0
+
+                # Name
+                name_item = QTableWidgetItem(part.name)
+                if not is_complete:
+                    name_item.setForeground(QColor("#FF5050"))  # Red text for incomplete
+                self.parts_table.setItem(row, 0, name_item)
+
+                # Part#
+                part_num_item = QTableWidgetItem(part.part_number or "-")
+                if not is_complete:
+                    part_num_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 1, part_num_item)
 
                 # Image (placeholder)
                 if part.image_binary:
@@ -218,15 +234,67 @@ class RFQDetailWindow(QMainWindow):
                     img_label.setPixmap(scaled)
                     self.parts_table.setCellWidget(row, 2, img_label)
                 else:
-                    self.parts_table.setItem(row, 2, QTableWidgetItem("-"))
+                    img_item = QTableWidgetItem("-")
+                    if not is_complete:
+                        img_item.setForeground(QColor("#FF5050"))
+                    self.parts_table.setItem(row, 2, img_item)
 
+                # Material
                 mat_name = part.material.short_name if part.material else "-"
-                self.parts_table.setItem(row, 3, QTableWidgetItem(mat_name))
-                self.parts_table.setItem(row, 4, QTableWidgetItem(f"{part.weight_g:.1f}" if part.weight_g else "-"))
-                self.parts_table.setItem(row, 5, QTableWidgetItem(f"{part.volume_cm3:.1f}" if part.volume_cm3 else "-"))
-                self.parts_table.setItem(row, 6, QTableWidgetItem(f"{part.projected_area_cm2:.1f}" if part.projected_area_cm2 else "-"))
-                self.parts_table.setItem(row, 7, QTableWidgetItem(f"{part.wall_thickness_mm:.2f}" if part.wall_thickness_mm else "-"))
-                self.parts_table.setItem(row, 8, QTableWidgetItem(str(part.parts_over_runtime or "-")))
+                mat_item = QTableWidgetItem(mat_name)
+                if not is_complete:
+                    mat_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 3, mat_item)
+
+                # Weight
+                weight_item = QTableWidgetItem(f"{part.weight_g:.1f}" if part.weight_g else "-")
+                if not is_complete:
+                    weight_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 4, weight_item)
+
+                # Volume
+                volume_item = QTableWidgetItem(f"{part.volume_cm3:.1f}" if part.volume_cm3 else "-")
+                if not is_complete:
+                    volume_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 5, volume_item)
+
+                # Projected Area (with source color coding)
+                proj_area_item = QTableWidgetItem(f"{part.projected_area_cm2:.1f}" if part.projected_area_cm2 else "-")
+                if not is_complete:
+                    proj_area_item.setForeground(QColor("#FF5050"))
+                # Apply source color
+                if part.projected_area_cm2 and hasattr(part, 'projected_area_source') and part.projected_area_source:
+                    apply_source_color_to_table_item(proj_area_item, part.projected_area_source)
+                self.parts_table.setItem(row, 6, proj_area_item)
+
+                # Wall Thickness (with source color coding)
+                wall_thick_item = QTableWidgetItem(f"{part.wall_thickness_mm:.2f}" if part.wall_thickness_mm else "-")
+                if not is_complete:
+                    wall_thick_item.setForeground(QColor("#FF5050"))
+                # Apply source color
+                if part.wall_thickness_mm and hasattr(part, 'wall_thickness_source') and part.wall_thickness_source:
+                    apply_source_color_to_table_item(wall_thick_item, part.wall_thickness_source)
+                self.parts_table.setItem(row, 7, wall_thick_item)
+
+                # Surface Finish (V2.0)
+                surface_finish_text = "-"
+                if part.surface_finish:
+                    surface_finish_text = part.surface_finish.replace("_", " ").title()
+                    if hasattr(part, 'surface_finish_detail') and part.surface_finish_detail:
+                        surface_finish_text += f" ({part.surface_finish_detail})"
+                sf_item = QTableWidgetItem(surface_finish_text)
+                if not is_complete:
+                    sf_item.setForeground(QColor("#FF5050"))
+                # Apply yellow if estimated
+                if hasattr(part, 'surface_finish_estimated') and part.surface_finish_estimated:
+                    apply_source_color_to_table_item(sf_item, "estimated")
+                self.parts_table.setItem(row, 8, sf_item)
+
+                # Total Demand
+                demand_item = QTableWidgetItem(str(part.parts_over_runtime or "-"))
+                if not is_complete:
+                    demand_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 9, demand_item)
 
                 # Tool assignment info
                 tool_configs = session.query(ToolPartConfiguration).filter(
@@ -243,31 +311,49 @@ class RFQDetailWindow(QMainWindow):
 
                     tool_names = ", ".join(sorted(tools_assigned))
                     tool_item = QTableWidgetItem(tool_names[:50])  # Tool name(s)
-                    tool_item.setBackground(tool_item.background())  # Normal color
-                    self.parts_table.setItem(row, 9, tool_item)
+                    if not is_complete:
+                        tool_item.setForeground(QColor("#FF5050"))
+                    self.parts_table.setItem(row, 10, tool_item)
                 else:
-                    self.parts_table.setItem(row, 9, QTableWidgetItem("-"))  # No tool assigned
+                    tool_item = QTableWidgetItem("-")  # No tool assigned
+                    if not is_complete:
+                        tool_item.setForeground(QColor("#FF5050"))
+                    self.parts_table.setItem(row, 10, tool_item)
 
                 # Assembly Defined (grey out if assembly not required)
                 if part.assembly:
                     asm_item = QTableWidgetItem("✓ Assembly")
-                    self.parts_table.setItem(row, 10, asm_item)
+                    self.parts_table.setItem(row, 11, asm_item)
                 else:
                     asm_item = QTableWidgetItem("-")
                     asm_item.setForeground(QColor("#999999"))  # Grey out
-                    self.parts_table.setItem(row, 10, asm_item)
+                    self.parts_table.setItem(row, 11, asm_item)
 
                 # Overmolding (grey out if not required)
                 if part.overmold:
                     over_item = QTableWidgetItem("✓ Overmold")
-                    self.parts_table.setItem(row, 11, over_item)
+                    self.parts_table.setItem(row, 12, over_item)
                 else:
                     over_item = QTableWidgetItem("-")
                     over_item.setForeground(QColor("#999999"))  # Grey out
-                    self.parts_table.setItem(row, 11, over_item)
+                    self.parts_table.setItem(row, 12, over_item)
 
+                # Status (V2.0)
+                if is_complete:
+                    status_item = QTableWidgetItem("✓ Complete")
+                    status_item.setForeground(QColor("#70AD47"))  # Green
+                else:
+                    missing_text = ", ".join(missing)
+                    status_item = QTableWidgetItem(f"Missing: {missing_text}")
+                    status_item.setForeground(QColor("#FF5050"))  # Red
+                self.parts_table.setItem(row, 13, status_item)
+
+                # Notes
                 notes = (part.notes or "")[:30] + ("..." if part.notes and len(part.notes) > 30 else "")
-                self.parts_table.setItem(row, 12, QTableWidgetItem(notes))
+                notes_item = QTableWidgetItem(notes)
+                if not is_complete:
+                    notes_item.setForeground(QColor("#FF5050"))
+                self.parts_table.setItem(row, 14, notes_item)
 
     def _format_cavities_display(self, tool: Tool) -> str:
         """Format cavities display as 'cav1/cav2/...' and check for imbalance."""
@@ -497,9 +583,13 @@ class RFQDetailWindow(QMainWindow):
             self._selected_tool_item = selected[0]
 
     def _on_tree_item_clicked(self, index):
-        """Handle click on tree items (to show image zoom for parts)."""
+        """Handle click on tree items (to show image zoom for parts when clicking image icon)."""
         item = self.tools_tree.itemFromIndex(index)
         if not item or not item.parent():  # Only handle child items (parts)
+            return
+
+        # Only trigger image zoom if clicking on column 0 (image icon)
+        if index.column() != 0:
             return
 
         # Check if item has part configuration data
@@ -511,85 +601,11 @@ class RFQDetailWindow(QMainWindow):
         with session_scope() as session:
             part_config = session.query(ToolPartConfiguration).get(part_config_id)
             if part_config and part_config.part and part_config.part.image_binary:
-                self._show_image_zoom(
-                    part_config.part.name,
+                show_image_preview(
+                    self,
+                    f"Part Image: {part_config.part.name}",
                     part_config.part.image_binary
                 )
-
-    def _show_image_zoom(self, part_name: str, image_data: bytes):
-        """Show image zoom preview window."""
-        zoom_window = QMainWindow(self)
-        zoom_window.setWindowTitle(f"Part Image: {part_name}")
-        zoom_window.setMinimumSize(800, 600)
-
-        # Central widget
-        central = QWidget()
-        layout = QVBoxLayout(central)
-
-        # Zoom buttons
-        button_layout = QHBoxLayout()
-        btn_zoom_in = QPushButton("🔍+ Zoom In")
-        btn_zoom_out = QPushButton("🔍- Zoom Out")
-        btn_fit = QPushButton("Fit Window")
-        btn_close = QPushButton("Close")
-
-        button_layout.addWidget(btn_zoom_in)
-        button_layout.addWidget(btn_zoom_out)
-        button_layout.addWidget(btn_fit)
-        button_layout.addStretch()
-        button_layout.addWidget(btn_close)
-        layout.addLayout(button_layout)
-
-        # Scroll area for image
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-
-        # Image label
-        img_label = QLabel()
-        pixmap = QPixmap()
-        pixmap.loadFromData(image_data)
-        img_label.setPixmap(pixmap)
-        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        img_label.setScaledContents(False)
-
-        scroll.setWidget(img_label)
-        layout.addWidget(scroll)
-
-        # Zoom controls
-        zoom_factor = 1.0
-
-        def zoom_in():
-            nonlocal zoom_factor
-            zoom_factor *= 1.2
-            pixmap_scaled = pixmap.scaledToWidth(
-                int(pixmap.width() * zoom_factor),
-                Qt.TransformationMode.SmoothTransformation
-            )
-            img_label.setPixmap(pixmap_scaled)
-
-        def zoom_out():
-            nonlocal zoom_factor
-            zoom_factor /= 1.2
-            if zoom_factor < 0.1:
-                zoom_factor = 0.1
-            pixmap_scaled = pixmap.scaledToWidth(
-                int(pixmap.width() * zoom_factor),
-                Qt.TransformationMode.SmoothTransformation
-            )
-            img_label.setPixmap(pixmap_scaled)
-
-        def fit_window():
-            nonlocal zoom_factor
-            zoom_factor = 1.0
-            img_label.setPixmap(pixmap)
-
-        btn_zoom_in.clicked.connect(zoom_in)
-        btn_zoom_out.clicked.connect(zoom_out)
-        btn_fit.clicked.connect(fit_window)
-        btn_close.clicked.connect(zoom_window.close)
-
-        zoom_window.setCentralWidget(central)
-        zoom_window.show()
 
     def _get_selected_tool_id(self) -> int:
         """Get ID of selected tool (parent item)."""

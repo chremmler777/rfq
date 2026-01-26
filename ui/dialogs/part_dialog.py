@@ -6,10 +6,10 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
     QTextEdit, QPushButton, QMessageBox, QGroupBox, QCheckBox, QSpinBox,
     QDoubleSpinBox, QScrollArea, QFrame, QTabWidget, QTableWidget, QTableWidgetItem,
-    QFileDialog, QRadioButton, QButtonGroup, QHeaderView, QWidget, QAbstractItemView
+    QFileDialog, QRadioButton, QButtonGroup, QHeaderView, QWidget, QAbstractItemView, QSplitter
 )
 from PyQt6.QtCore import Qt, QByteArray, QMimeData
-from PyQt6.QtGui import QPixmap, QIcon, QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QPixmap, QIcon, QDragEnterEvent, QDropEvent, QFont
 
 from database import DegateOption, EOATType, PartRevision, SubBOM
 from database.connection import session_scope
@@ -18,15 +18,18 @@ from calculations import (
     GeometryFactory, BoxEstimateMode,
     WeightVolumeHelper, auto_calculate_volume, auto_calculate_weight
 )
+from ui.widgets.image_preview import show_image_preview
+from ui.color_coding import get_missing_fields, is_part_complete
 
 
 class ImageDropLabel(QLabel):
-    """Label that accepts image files via drag-and-drop."""
+    """Label that accepts image files via drag-and-drop and supports clicking to zoom."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.image_dropped = None  # Callback for when image is dropped
+        self.image_clicked = None  # Callback for when image is clicked
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event."""
@@ -53,6 +56,12 @@ class ImageDropLabel(QLabel):
                     event.acceptProposedAction()
                     break
 
+    def mousePressEvent(self, event):
+        """Handle mouse click to show image zoom."""
+        if self.pixmap() and not self.pixmap().isNull() and self.image_clicked:
+            self.image_clicked()
+        super().mousePressEvent(event)
+
 
 class PartDialog(QDialog):
     """Dialog for creating/editing parts (BOM entries)."""
@@ -65,7 +74,8 @@ class PartDialog(QDialog):
         self.image_data = None  # Store binary image data
         self.image_filename = None
         self._saved_part_id = None  # Track saved part ID to avoid detached object access
-        self._wall_thickness_source = "given"  # Track if wall thickness was given or estimated
+        self._wall_thickness_source = "data"  # Track if wall thickness was "data", "bom", or "estimated"
+        self._projected_area_source = "data"  # Track if projected area was "data", "bom", or "estimated"
 
         self.setWindowTitle("Add Part to BOM" if not part_id else "Edit Part")
         self.setMinimumWidth(900)
@@ -88,6 +98,9 @@ class PartDialog(QDialog):
                     # Track wall thickness source
                     if hasattr(self.part, 'wall_thickness_source'):
                         self._wall_thickness_source = self.part.wall_thickness_source
+                    # Track projected area source
+                    if hasattr(self.part, 'projected_area_source'):
+                        self._projected_area_source = self.part.projected_area_source
                 # Detach from session
                 if self.part:
                     session.expunge(self.part)
@@ -101,13 +114,14 @@ class PartDialog(QDialog):
                 session.expunge(mat)
 
     def _setup_ui(self):
-        """Setup the dialog UI."""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        main_widget = QFrame()
-        layout = QVBoxLayout(main_widget)
+        """Setup the dialog UI with tabs on left and properties panel on right."""
+        # Main layout (vertical)
+        main_layout = QVBoxLayout(self)
 
-        # Tab widget for organized sections
+        # Content area (horizontal split: tabs | properties)
+        content_layout = QHBoxLayout()
+
+        # LEFT: Tab widget for organized sections
         tabs = QTabWidget()
 
         # ===== TAB 1: Basic Info =====
@@ -131,14 +145,19 @@ class PartDialog(QDialog):
             revisions_widget = self._create_revisions_tab()
             tabs.addTab(revisions_widget, "Revisions")
 
-        layout.addWidget(tabs)
-        scroll.setWidget(main_widget)
+        content_layout.addWidget(tabs, stretch=1)
 
-        # Main layout
-        main_layout = QVBoxLayout(self)
-        main_layout.addWidget(scroll)
+        # RIGHT: Properties panel (persistent, non-scrolling)
+        self.properties_panel = self._create_properties_panel()
+        content_layout.addWidget(self.properties_panel, stretch=0)
 
-        # Buttons
+        main_layout.addLayout(content_layout)
+
+        # Apply colors after basic tab is created
+        self._update_material_color()
+        self._update_surface_finish_colors()
+
+        # Buttons (bottom)
         button_layout = QHBoxLayout()
 
         self.btn_save = QPushButton("Save Part")
@@ -151,52 +170,310 @@ class PartDialog(QDialog):
 
         main_layout.addLayout(button_layout)
 
+        # Connect all signals to update properties panel
+        self._connect_properties_signals()
+
+        # Initial properties update
+        self._update_validation_status()
+
+    def _connect_properties_signals(self):
+        """Connect all input signals to properties panel update."""
+        self.name_input.textChanged.connect(self._update_validation_status)
+        self.volume_spin.valueChanged.connect(self._update_validation_status)
+        self.material_combo.currentIndexChanged.connect(self._update_validation_status)
+        self.demand_peak_spin.valueChanged.connect(self._update_validation_status)
+        self.weight_spin.valueChanged.connect(self._update_validation_status)
+        self.proj_area_spin.valueChanged.connect(self._update_validation_status)
+        self.wall_thick_spin.valueChanged.connect(self._update_validation_status)
+        self.surface_finish_combo.currentIndexChanged.connect(self._update_validation_status)
+
+    def _create_properties_panel(self) -> QFrame:
+        """Create right-side properties display panel (persistent across tabs)."""
+        panel = QFrame()
+        # Dark theme with subtle borders
+        panel.setStyleSheet(
+            "QFrame { "
+            "background-color: #2c3e50; "
+            "border-left: 1px solid #34495e; "
+            "border-radius: 0px; "
+            "} "
+        )
+        panel.setMinimumWidth(310)
+        panel.setMaximumWidth(360)
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # Title
+        title = QLabel("Part Properties")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(12)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #ecf0f1;")
+        layout.addWidget(title)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #34495e;")
+        layout.addWidget(sep)
+
+        # Property labels (will be updated dynamically)
+        self.prop_labels = {
+            'name': self._create_prop_label('Name', ''),
+            'volume': self._create_prop_label('Volume (cm³)', ''),
+            'material': self._create_prop_label('Material', ''),
+            'demand': self._create_prop_label('Total Demand', ''),
+            'weight': self._create_prop_label('Weight (g)', ''),
+            'proj_area': self._create_prop_label('Proj. Area (cm²)', ''),
+            'wall_thick': self._create_prop_label('Wall Thick (mm)', ''),
+            'surface_finish': self._create_prop_label('Surface Finish', ''),
+        }
+
+        for prop_label in self.prop_labels.values():
+            layout.addWidget(prop_label)
+
+        # Separator
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #34495e;")
+        layout.addWidget(sep2)
+
+        # Missing fields indicator
+        self.missing_label = QLabel()
+        self.missing_label.setWordWrap(True)
+        self.missing_label.setStyleSheet("color: #ecf0f1;")
+        layout.addWidget(self.missing_label)
+
+        # Color legend (NEW)
+        layout.addSpacing(5)
+        self._add_color_legend(layout)
+
+        layout.addStretch()
+        return panel
+
+    def _add_color_legend(self, layout: QVBoxLayout):
+        """Add color legend to show meaning of colors."""
+        legend_label = QLabel("Color Legend")
+        legend_label_font = QFont()
+        legend_label_font.setBold(True)
+        legend_label_font.setPointSize(9)
+        legend_label.setFont(legend_label_font)
+        legend_label.setStyleSheet("color: #bdc3c7;")
+        layout.addWidget(legend_label)
+
+        # Yellow - Estimated
+        yellow_item = QLabel()
+        yellow_item.setStyleSheet(
+            "QLabel { "
+            "background-color: #FFD54F; "
+            "color: #000000; "
+            "padding: 4px 6px; "
+            "border-radius: 3px; "
+            "font-weight: bold; "
+            "font-size: 10px; "
+            "} "
+        )
+        yellow_item.setText("■ Estimated")
+        yellow_item.setToolTip("Value is estimated (not from design or BOM)")
+        layout.addWidget(yellow_item)
+
+        # Blue - BOM
+        blue_item = QLabel()
+        blue_item.setStyleSheet(
+            "QLabel { "
+            "background-color: #64B5F6; "
+            "color: #000000; "
+            "padding: 4px 6px; "
+            "border-radius: 3px; "
+            "font-weight: bold; "
+            "font-size: 10px; "
+            "} "
+        )
+        blue_item.setText("■ BOM Sourced")
+        blue_item.setToolTip("Value comes from Bill of Materials")
+        layout.addWidget(blue_item)
+
+        # Red - Missing
+        red_item = QLabel()
+        red_item.setStyleSheet(
+            "QLabel { "
+            "background-color: #FFE0E0; "
+            "color: #FF5050; "
+            "padding: 4px 6px; "
+            "border-radius: 3px; "
+            "font-weight: bold; "
+            "font-size: 10px; "
+            "} "
+        )
+        red_item.setText("■ Missing Required")
+        red_item.setToolTip("This field is required but not filled")
+        layout.addWidget(red_item)
+
+    def _create_prop_label(self, label: str, value: str) -> QLabel:
+        """Create a property label with name and value."""
+        label_widget = QLabel(f"<b>{label}:</b> {value}")
+        label_widget.setWordWrap(True)
+        label_widget.setStyleSheet("color: #ecf0f1;")
+        label_widget.setToolTip(f"Current value of {label}")
+        return label_widget
+
     def _create_basic_tab(self) -> QWidget:
         """Create basic information tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setSpacing(15)  # More space between sections
 
-        layout.addWidget(QLabel("Part Name *"))
+        # Part Name
+        name_label = QLabel("Part Name *")
+        name_font = QFont()
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+        layout.addWidget(name_label)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g., Housing")
         if self.part:
             self.name_input.setText(self.part.name)
         layout.addWidget(self.name_input)
 
-        layout.addWidget(QLabel("Part Number"))
+        # Part Number
+        pn_label = QLabel("Part Number")
+        pn_font = QFont()
+        pn_font.setBold(True)
+        pn_label.setFont(pn_font)
+        layout.addWidget(pn_label)
         self.part_number_input = QLineEdit()
         if self.part:
             self.part_number_input.setText(self.part.part_number or "")
         layout.addWidget(self.part_number_input)
 
-        layout.addWidget(QLabel("Material"))
+        # Material (REQUIRED)
+        mat_label = QLabel("Material *")
+        mat_font = QFont()
+        mat_font.setBold(True)
+        mat_font.setPointSize(10)
+        mat_label.setFont(mat_font)
+        layout.addWidget(mat_label)
+
+        mat_row = QHBoxLayout()
+        mat_row.setSpacing(10)
+
+        self.material_estimated_check = QCheckBox("Estimated")
+        self.material_estimated_check.setChecked(False)  # Default to not estimated
+        self.material_estimated_check.setMaximumWidth(110)
+        self.material_estimated_check.toggled.connect(self._on_material_estimated_toggled)
+        mat_row.addWidget(self.material_estimated_check)
+
+        # Visual separator
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.Shape.VLine)
+        separator1.setLineWidth(2)
+        separator1.setStyleSheet("color: #cccccc;")
+        mat_row.addWidget(separator1)
+
         self.material_combo = QComboBox()
-        self.material_combo.addItem("- Select Material -", None)
+        self.material_combo.addItem("", None)  # Empty default for new parts
         for mat in self.materials:
             self.material_combo.addItem(f"{mat.short_name} ({mat.family})", mat.id)
         if self.part and self.part.material_id:
+            # Only autofill when editing existing part
             index = self.material_combo.findData(self.part.material_id)
             if index >= 0:
                 self.material_combo.setCurrentIndex(index)
         self.material_combo.currentIndexChanged.connect(self._on_material_changed)
-        layout.addWidget(self.material_combo)
+        mat_row.addWidget(self.material_combo)
+        mat_row.addStretch()
+        layout.addLayout(mat_row)
 
-        # Image upload
-        layout.addWidget(QLabel("<b>Part Image (drag-drop or upload)</b>"))
+        # Surface Finish (REQUIRED)
+        sf_label = QLabel("Surface Finish *")
+        sf_font = QFont()
+        sf_font.setBold(True)
+        sf_font.setPointSize(10)
+        sf_label.setFont(sf_font)
+        layout.addWidget(sf_label)
+
+        sf_row = QHBoxLayout()
+        sf_row.setSpacing(10)
+
+        self.surface_finish_estimated_check = QCheckBox("Estimated")
+        self.surface_finish_estimated_check.setChecked(self.part.surface_finish_estimated if self.part else False)
+        self.surface_finish_estimated_check.toggled.connect(self._on_surface_finish_estimated_toggled)
+        self.surface_finish_estimated_check.setMaximumWidth(110)
+        sf_row.addWidget(self.surface_finish_estimated_check)
+
+        # Visual separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.VLine)
+        separator2.setLineWidth(2)
+        separator2.setStyleSheet("color: #cccccc;")
+        sf_row.addWidget(separator2)
+
+        self.surface_finish_combo = QComboBox()
+        self.surface_finish_combo.addItem("", None)  # Empty default for new parts
+        from database import SurfaceFinish
+        for sf in SurfaceFinish:
+            display_name = sf.value.replace("_", " ").title()
+            self.surface_finish_combo.addItem(display_name, sf.value)
+        if self.part and self.part.surface_finish:
+            # Only autofill when editing existing part
+            index = self.surface_finish_combo.findData(self.part.surface_finish)
+            if index >= 0:
+                self.surface_finish_combo.setCurrentIndex(index)
+        sf_row.addWidget(self.surface_finish_combo)
+
+        self.surface_finish_detail_input = QLineEdit()
+        self.surface_finish_detail_input.setPlaceholderText("e.g., grid 800 or Ra 1.6 μm")
+        if self.part and self.part.surface_finish_detail:
+            self.surface_finish_detail_input.setText(self.part.surface_finish_detail)
+        sf_row.addWidget(self.surface_finish_detail_input)
+        sf_row.addStretch()
+
+        layout.addLayout(sf_row)
+        self._update_surface_finish_colors()
+
+        # Image upload (compact: single image only)
+        layout.addSpacing(15)
+        img_label = QLabel("Part Image")
+        img_font = QFont()
+        img_font.setBold(True)
+        img_label.setFont(img_font)
+        layout.addWidget(img_label)
+
         image_layout = QHBoxLayout()
+        image_layout.setSpacing(8)
 
-        self.btn_upload_image = QPushButton("Upload Image")
+        self.btn_upload_image = QPushButton("Upload")
         self.btn_upload_image.clicked.connect(self._on_upload_image)
+        self.btn_upload_image.setMaximumWidth(80)
         image_layout.addWidget(self.btn_upload_image)
 
+        self.btn_delete_image = QPushButton("Delete")
+        self.btn_delete_image.clicked.connect(self._on_delete_image)
+        self.btn_delete_image.setEnabled(bool(self.image_data))
+        self.btn_delete_image.setMaximumWidth(80)
+        image_layout.addWidget(self.btn_delete_image)
+
+        image_layout.addStretch()
+        layout.addLayout(image_layout)
+
+        # Image preview (bigger - 120px for better visibility)
         self.image_label = ImageDropLabel()
-        self.image_label.setMinimumHeight(150)
+        self.image_label.setMinimumHeight(120)
+        self.image_label.setMaximumHeight(120)
         self.image_label.setStyleSheet("border: 1px solid #ccc;")
         self.image_label.image_dropped = self._process_dropped_image
+        self.image_label.image_clicked = self._on_image_clicked
         if self.image_data:
             pixmap = QPixmap()
             pixmap.loadFromData(self.image_data)
-            self.image_label.setPixmap(pixmap.scaledToHeight(150, Qt.TransformationMode.SmoothTransformation))
+            self.image_label.setPixmap(pixmap.scaledToHeight(80, Qt.TransformationMode.SmoothTransformation))
+            self.image_label.setText("")
+        else:
+            self.image_label.setText("Drag-drop or Upload")
+            self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.image_label)
 
         layout.addStretch()
@@ -230,13 +507,30 @@ class PartDialog(QDialog):
         # Direct mode
         self.direct_frame = QGroupBox("Direct Projected Surface Input")
         direct_layout = QVBoxLayout()
-        direct_layout.addWidget(QLabel("Projected Surface (cm²)"))
+
+        # Projected area with source dropdown
+        proj_row = QHBoxLayout()
+        proj_row.addWidget(QLabel("Projected Surface (cm²)"))
         self.proj_area_spin = QDoubleSpinBox()
         self.proj_area_spin.setRange(0.1, 10000)
         self.proj_area_spin.setDecimals(2)
         if self.part and self.part.projected_area_cm2:
             self.proj_area_spin.setValue(self.part.projected_area_cm2)
-        direct_layout.addWidget(self.proj_area_spin)
+        proj_row.addWidget(self.proj_area_spin)
+
+        self.proj_area_source_combo = QComboBox()
+        self.proj_area_source_combo.addItem("Part Data", "data")
+        self.proj_area_source_combo.addItem("BOM", "bom")
+        if self.part and self.part.projected_area_source:
+            index = self.proj_area_source_combo.findData(self.part.projected_area_source)
+            if index >= 0:
+                self.proj_area_source_combo.setCurrentIndex(index)
+                self._projected_area_source = self.part.projected_area_source
+        self.proj_area_source_combo.currentIndexChanged.connect(self._on_proj_area_source_changed)
+        proj_row.addWidget(self.proj_area_source_combo)
+        proj_row.addStretch()
+
+        direct_layout.addLayout(proj_row)
         self.direct_frame.setLayout(direct_layout)
         layout.addWidget(self.direct_frame)
 
@@ -321,8 +615,26 @@ class PartDialog(QDialog):
 
         phys_layout.addLayout(phys_row2)
 
+        # Wall Thickness with source indicator
+        layout_label = QHBoxLayout()
+        layout_label.addWidget(QLabel("Wall Thickness (mm)"))
+        layout_label.addStretch()
+        phys_layout.addLayout(layout_label)
+
         phys_row3 = QHBoxLayout()
-        phys_row3.addWidget(QLabel("Wall Thickness (mm)"))
+
+        # Estimated checkbox on left
+        self.wall_thick_source_check = QCheckBox("☐ Estimated")
+        self.wall_thick_source_check.setMaximumWidth(120)
+        phys_row3.addWidget(self.wall_thick_source_check)
+
+        # Visual separator
+        separator3 = QFrame()
+        separator3.setFrameShape(QFrame.Shape.VLine)
+        separator3.setLineWidth(2)
+        separator3.setStyleSheet("color: #cccccc;")
+        phys_row3.addWidget(separator3)
+
         self.wall_thick_spin = QDoubleSpinBox()
         self.wall_thick_spin.setRange(0.5, 10)
         self.wall_thick_spin.setDecimals(2)
@@ -330,10 +642,22 @@ class PartDialog(QDialog):
             self.wall_thick_spin.setValue(self.part.wall_thickness_mm)
         phys_row3.addWidget(self.wall_thick_spin)
 
-        # Wall thickness source tracking
-        self.wall_thick_label = QLabel()
-        self._update_wall_thickness_label()
-        phys_row3.addWidget(self.wall_thick_label)
+        # Wall thickness source dropdown
+        self.wall_thick_source_combo = QComboBox()
+        self.wall_thick_source_combo.addItem("Data", "data")
+        self.wall_thick_source_combo.addItem("BOM", "bom")
+        self.wall_thick_source_combo.addItem("Estimated", "estimated")
+        if self.part and self.part.wall_thickness_source:
+            index = self.wall_thick_source_combo.findData(self.part.wall_thickness_source)
+            if index >= 0:
+                self.wall_thick_source_combo.setCurrentIndex(index)
+                self._wall_thickness_source = self.part.wall_thickness_source
+                # Initialize checkbox to match source
+                self.wall_thick_source_check.setChecked(self._wall_thickness_source == "estimated")
+        self.wall_thick_source_combo.currentIndexChanged.connect(self._on_wall_thick_source_changed)
+        # Link checkbox to combo
+        self.wall_thick_source_check.toggled.connect(self._on_wall_thick_estimated_toggled)
+        phys_row3.addWidget(self.wall_thick_source_combo)
 
         self.btn_estimate_wall = QPushButton("Estimate (2.5mm)")
         self.btn_estimate_wall.clicked.connect(self._on_estimate_wall_thickness)
@@ -342,8 +666,20 @@ class PartDialog(QDialog):
         phys_row3.addStretch()
         phys_layout.addLayout(phys_row3)
 
+        # Wall thickness needs improvement checkbox
+        improve_row = QHBoxLayout()
+        self.wall_thick_improve_check = QCheckBox("☐ 3D wall thickness needs improvement")
+        self.wall_thick_improve_check.setChecked(self.part.wall_thickness_needs_improvement if self.part else False)
+        improve_row.addWidget(self.wall_thick_improve_check)
+        improve_row.addStretch()
+        phys_layout.addLayout(improve_row)
+
         phys_frame.setLayout(phys_layout)
         layout.addWidget(phys_frame)
+
+        # Apply colors after all widgets are created
+        self._update_wall_thickness_color()
+        self._update_proj_area_color()
 
         layout.addStretch()
         return tab
@@ -353,21 +689,7 @@ class PartDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # Assembly sub-BOM (at top)
-        self.assembly_bom_group, self.assembly_bom_table = self._create_bom_section(
-            layout, "Assembly Sub-BOM (Components)", ["Item Name", "Qty", "Notes"],
-            self._on_add_assembly_item, self._on_remove_assembly_item
-        )
-
-        # Overmold sub-BOM
-        self.overmold_bom_group, self.overmold_bom_table = self._create_bom_section(
-            layout, "Overmold Sub-BOM (Materials)", ["Material/Item", "Qty", "Notes"],
-            self._on_add_overmold_item, self._on_remove_overmold_item
-        )
-
-        layout.addSpacing(10)
-
-        # Manufacturing options (at bottom)
+        # Manufacturing options (at TOP now in V2.0)
         mfg_group = QGroupBox("Manufacturing Options")
         mfg_layout = QVBoxLayout()
 
@@ -385,16 +707,22 @@ class PartDialog(QDialog):
         mfg_row1.addStretch()
         mfg_layout.addLayout(mfg_row1)
 
-        # V2.0: Degate and EOAT moved to Tool level
-        info_label = QLabel(
-            "<i>Note: Degate and EOAT Type are now configured at the tool level (in the Tool dialog), "
-            "not per-part. This allows better control when multiple parts share a tool.</i>"
-        )
-        info_label.setWordWrap(True)
-        mfg_layout.addWidget(info_label)
-
         mfg_group.setLayout(mfg_layout)
         layout.addWidget(mfg_group)
+
+        layout.addSpacing(10)
+
+        # Assembly sub-BOM (conditionally visible)
+        self.assembly_bom_group, self.assembly_bom_table = self._create_bom_section(
+            layout, "Assembly Sub-BOM (Components)", ["Item Name", "Qty", "Notes"],
+            self._on_add_assembly_item, self._on_remove_assembly_item
+        )
+
+        # Overmold sub-BOM (conditionally visible)
+        self.overmold_bom_group, self.overmold_bom_table = self._create_bom_section(
+            layout, "Overmold Sub-BOM (Materials)", ["Material/Item", "Qty", "Notes"],
+            self._on_add_overmold_item, self._on_remove_overmold_item
+        )
 
         # Load existing sub-BOM items
         self._load_sub_bom_items()
@@ -565,10 +893,124 @@ class PartDialog(QDialog):
         self.box_frame.setVisible(is_box_mode)
         self.direct_frame.setVisible(not is_box_mode)
 
+        # When box mode selected, mark projected area as estimated
+        if is_box_mode:
+            self._projected_area_source = "estimated"
+            self.proj_area_source_combo.setCurrentIndex(self.proj_area_source_combo.findData("estimated"))
+            self._update_proj_area_color()
+        else:
+            # When switching back to direct, reset to data source
+            self._projected_area_source = "data"
+            self.proj_area_source_combo.setCurrentIndex(self.proj_area_source_combo.findData("data"))
+            self._update_proj_area_color()
+
     def _on_material_changed(self):
         """Handle material selection change."""
         # This could be used to update density for calculations in future
         pass
+
+    def _on_material_estimated_toggled(self):
+        """Handle material estimated checkbox toggle."""
+        self._update_material_color()
+
+    def _update_material_color(self):
+        """Update material combo color based on estimated status."""
+        from ui.color_coding import apply_source_color_to_widget
+        if self.material_estimated_check.isChecked():
+            apply_source_color_to_widget(self.material_combo, "estimated")
+        else:
+            apply_source_color_to_widget(self.material_combo, "data")
+
+    def _on_surface_finish_estimated_toggled(self):
+        """Handle surface finish estimated checkbox toggle."""
+        self._update_surface_finish_colors()
+
+    def _update_surface_finish_colors(self):
+        """Update surface finish colors based on estimated status."""
+        from ui.color_coding import apply_source_color_to_widget, COLOR_ESTIMATED_BG
+        if self.surface_finish_estimated_check.isChecked():
+            apply_source_color_to_widget(self.surface_finish_combo, "estimated")
+            apply_source_color_to_widget(self.surface_finish_detail_input, "estimated")
+        else:
+            apply_source_color_to_widget(self.surface_finish_combo, "data")
+            apply_source_color_to_widget(self.surface_finish_detail_input, "data")
+
+    def _update_validation_status(self):
+        """Update properties panel with current part data and highlight missing fields."""
+        # Gather current values
+        name = self.name_input.text().strip()
+        volume = self.volume_spin.value() if self.volume_spin.value() > 0 else None
+        material_id = self.material_combo.currentData()
+        material_name = self.material_combo.currentText()
+        demand = self.demand_peak_spin.value() if self.demand_peak_spin.value() > 0 else None
+        weight = self.weight_spin.value() if self.weight_spin.value() > 0 else None
+        proj_area = self.proj_area_spin.value() if self.proj_area_spin.value() > 0 else None
+        wall_thick = self.wall_thick_spin.value() if self.wall_thick_spin.value() > 0 else None
+        surface_finish = self.surface_finish_combo.currentText()
+
+        # Create temp part for validation
+        temp_part = Part(
+            name=name,
+            volume_cm3=volume,
+            material_id=material_id,
+            parts_over_runtime=demand,
+        )
+
+        missing = get_missing_fields(temp_part)
+
+        # Update properties labels
+        self.prop_labels['name'].setText(self._format_prop('Name', name, 'name' in missing))
+        self.prop_labels['volume'].setText(self._format_prop('Volume (cm³)', f'{volume:.1f}' if volume else '-', 'Volume' in missing))
+        self.prop_labels['material'].setText(self._format_prop('Material', material_name if material_id else '-', 'Material' in missing))
+        self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
+        self.prop_labels['weight'].setText(self._format_prop('Weight (g)', f'{weight:.1f}' if weight else '-', False))
+
+        # Projected area with source color
+        proj_area_text = f'{proj_area:.1f}' if proj_area else '-'
+        proj_area_source = self._projected_area_source if hasattr(self, '_projected_area_source') else 'data'
+        self.prop_labels['proj_area'].setText(self._format_prop_with_source('Proj. Area (cm²)', proj_area_text, proj_area_source))
+
+        # Wall thickness with source color
+        wall_thick_text = f'{wall_thick:.2f}' if wall_thick else '-'
+        wall_thick_source = self._wall_thickness_source if hasattr(self, '_wall_thickness_source') else 'data'
+        self.prop_labels['wall_thick'].setText(self._format_prop_with_source('Wall Thick (mm)', wall_thick_text, wall_thick_source))
+
+        # Surface finish with estimated indicator
+        sf_text = surface_finish if surface_finish else '-'
+        sf_source = 'estimated' if self.surface_finish_estimated_check.isChecked() else 'data'
+        self.prop_labels['surface_finish'].setText(self._format_prop_with_source('Surface Finish', sf_text, sf_source))
+
+        # Update missing fields indicator
+        if missing:
+            missing_text = ", ".join(missing)
+            self.missing_label.setText(f"<font color='#FF5050'><b>Missing:</b> {missing_text}</font>")
+        else:
+            self.missing_label.setText("<font color='#70AD47'><b>✓ Complete</b></font>")
+
+    def _format_prop(self, label: str, value: str, is_missing: bool) -> str:
+        """Format a property label with optional red text for missing fields."""
+        color = '#FF5050' if is_missing else '#ecf0f1'
+        return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='{color}'>{value}</font>"
+
+    def _format_prop_with_source(self, label: str, value: str, source: str) -> str:
+        """Format a property with source color indicator (yellow=estimated, blue=bom, white=data)."""
+        if value == '-':
+            color = '#ecf0f1'
+            bg = ''
+        elif source == 'estimated':
+            color = '#000000'
+            bg = "background-color: #FFD54F; padding: 2px 4px; border-radius: 2px;"
+        elif source == 'bom':
+            color = '#000000'
+            bg = "background-color: #64B5F6; padding: 2px 4px; border-radius: 2px;"
+        else:
+            color = '#ecf0f1'
+            bg = ''
+
+        if bg:
+            return f"<b style='color: #ecf0f1;'>{label}:</b> <span style='{bg}'><font color='{color}'>{value}</font></span>"
+        else:
+            return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='{color}'>{value}</font>"
 
     def _on_upload_image(self):
         """Handle image upload via file dialog."""
@@ -592,9 +1034,33 @@ class PartDialog(QDialog):
             # Show preview
             pixmap = QPixmap(file_path)
             self.image_label.setPixmap(pixmap.scaledToHeight(150, Qt.TransformationMode.SmoothTransformation))
+            self.image_label.setText("")
+            self.btn_delete_image.setEnabled(True)
             QMessageBox.information(self, "Image Loaded", f"Image '{self.image_filename}' loaded successfully")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load image: {str(e)}")
+
+    def _on_image_clicked(self):
+        """Handle image label click to show zoom preview."""
+        if self.image_data and self.image_filename:
+            show_image_preview(self, f"Part Image: {self.image_filename}", self.image_data)
+
+    def _on_delete_image(self):
+        """Delete the current image after confirmation."""
+        reply = QMessageBox.question(
+            self, "Delete Image",
+            "Are you sure you want to delete this image?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.image_data = None
+            self.image_filename = None
+            self.image_label.setPixmap(QPixmap())
+            self.image_label.setText("No image\nDrag-drop or click Upload")
+            self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.btn_delete_image.setEnabled(False)
+            QMessageBox.information(self, "Image Deleted", "Image has been removed")
 
     def _on_calculate_box_area(self):
         """Calculate projected area from box dimensions."""
@@ -663,13 +1129,40 @@ class PartDialog(QDialog):
         """Estimate wall thickness with standard 2.5mm value."""
         self.wall_thick_spin.setValue(2.5)
         self._wall_thickness_source = "estimated"
-        self._update_wall_thickness_label()
+        index = self.wall_thick_source_combo.findData("estimated")
+        if index >= 0:
+            self.wall_thick_source_combo.setCurrentIndex(index)
+        self._on_wall_thick_source_changed()
         QMessageBox.information(self, "Estimated", "Wall thickness set to standard 2.5mm (marked as estimated)")
 
-    def _update_wall_thickness_label(self):
-        """Update the wall thickness source label."""
-        source_text = " (est.)" if self._wall_thickness_source == "estimated" else " (given)"
-        self.wall_thick_label.setText(source_text)
+    def _on_wall_thick_source_changed(self):
+        """Handle wall thickness source change."""
+        self._wall_thickness_source = self.wall_thick_source_combo.currentData()
+        # Update checkbox to reflect estimated status
+        self.wall_thick_source_check.setChecked(self._wall_thickness_source == "estimated")
+        self._update_wall_thickness_color()
+
+    def _on_proj_area_source_changed(self):
+        """Handle projected area source change."""
+        self._projected_area_source = self.proj_area_source_combo.currentData()
+        self._update_proj_area_color()
+
+    def _on_wall_thick_estimated_toggled(self):
+        """Handle wall thickness estimated checkbox toggle."""
+        if self.wall_thick_source_check.isChecked():
+            self.wall_thick_source_combo.setCurrentIndex(self.wall_thick_source_combo.findData("estimated"))
+        else:
+            self.wall_thick_source_combo.setCurrentIndex(self.wall_thick_source_combo.findData("data"))
+
+    def _update_wall_thickness_color(self):
+        """Update wall thickness spin box color based on source."""
+        from ui.color_coding import apply_source_color_to_widget
+        apply_source_color_to_widget(self.wall_thick_spin, self._wall_thickness_source)
+
+    def _update_proj_area_color(self):
+        """Update projected area spin box color based on source."""
+        from ui.color_coding import apply_source_color_to_widget
+        apply_source_color_to_widget(self.proj_area_spin, self._projected_area_source)
 
     def _load_sub_bom_items(self):
         """Load existing sub-BOM items from part."""
@@ -734,7 +1227,7 @@ class PartDialog(QDialog):
         name = self.name_input.text().strip()
 
         if not name:
-            QMessageBox.warning(self, "Validation", "Part name is required")
+            QMessageBox.warning(self, "Validation", "Part name is required (database constraint)")
             return
 
         material_id = self.material_combo.currentData()
@@ -770,6 +1263,13 @@ class PartDialog(QDialog):
                     part.projected_area_cm2 = self.proj_area_spin.value() or None
                     part.wall_thickness_mm = self.wall_thick_spin.value() or None
                     part.wall_thickness_source = self._wall_thickness_source
+                    part.wall_thickness_needs_improvement = self.wall_thick_improve_check.isChecked()
+                    # Projected area source (V2.0)
+                    part.projected_area_source = self._projected_area_source
+                    # Surface finish (V2.0)
+                    part.surface_finish = self.surface_finish_combo.currentData() or None
+                    part.surface_finish_detail = self.surface_finish_detail_input.text().strip() or None
+                    part.surface_finish_estimated = self.surface_finish_estimated_check.isChecked()
                     # Note: demand_sop and demand_eaop are now at RFQ level (project-level)
                     # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                     part.parts_over_runtime = self.demand_peak_spin.value() or None
@@ -815,6 +1315,13 @@ class PartDialog(QDialog):
                         projected_area_cm2=self.proj_area_spin.value() or None,
                         wall_thickness_mm=self.wall_thick_spin.value() or None,
                         wall_thickness_source=self._wall_thickness_source,
+                        wall_thickness_needs_improvement=self.wall_thick_improve_check.isChecked(),
+                        # Projected area source (V2.0)
+                        projected_area_source=self._projected_area_source,
+                        # Surface finish (V2.0)
+                        surface_finish=self.surface_finish_combo.currentData() or None,
+                        surface_finish_detail=self.surface_finish_detail_input.text().strip() or None,
+                        surface_finish_estimated=self.surface_finish_estimated_check.isChecked(),
                         # Note: demand_sop and demand_eaop are now at RFQ level (project-level)
                         # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                         parts_over_runtime=self.demand_peak_spin.value() or None,
