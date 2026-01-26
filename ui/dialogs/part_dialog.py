@@ -140,10 +140,9 @@ class PartDialog(QDialog):
         demand_widget = self._create_demand_tab()
         tabs.addTab(demand_widget, "Demand & Notes")
 
-        # ===== TAB 5: Revisions (if editing) =====
-        if self.part_id:
-            revisions_widget = self._create_revisions_tab()
-            tabs.addTab(revisions_widget, "Revisions")
+        # ===== TAB 5: Revisions (always add, will have data after save) =====
+        revisions_widget = self._create_revisions_tab()
+        tabs.addTab(revisions_widget, "Revisions")
 
         content_layout.addWidget(tabs, stretch=1)
 
@@ -624,7 +623,7 @@ class PartDialog(QDialog):
         phys_row3 = QHBoxLayout()
 
         # Estimated checkbox on left
-        self.wall_thick_source_check = QCheckBox("☐ Estimated")
+        self.wall_thick_source_check = QCheckBox("Estimated")
         self.wall_thick_source_check.setMaximumWidth(120)
         phys_row3.addWidget(self.wall_thick_source_check)
 
@@ -668,7 +667,7 @@ class PartDialog(QDialog):
 
         # Wall thickness needs improvement checkbox
         improve_row = QHBoxLayout()
-        self.wall_thick_improve_check = QCheckBox("☐ 3D wall thickness needs improvement")
+        self.wall_thick_improve_check = QCheckBox("3D wall thickness needs improvement")
         self.wall_thick_improve_check.setChecked(self.part.wall_thickness_needs_improvement if self.part else False)
         improve_row.addWidget(self.wall_thick_improve_check)
         improve_row.addStretch()
@@ -795,43 +794,86 @@ class PartDialog(QDialog):
         return tab
 
     def _create_revisions_tab(self) -> QWidget:
-        """Create revisions/audit log tab (read-only)."""
+        """Create revisions/audit log tab with collapsible tree view (grouped by day and user)."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
         layout.addWidget(QLabel("<b>Change History</b>"))
 
-        self.revisions_table = QTableWidget()
-        self.revisions_table.setColumnCount(5)
-        self.revisions_table.setHorizontalHeaderLabels([
-            "Date & Time", "Changed By", "Field", "Old Value", "New Value"
-        ])
-        self.revisions_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.revisions_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.revisions_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.revisions_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.revisions_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        # Make table read-only
-        self.revisions_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Create tree widget with collapsible structure
+        self.revisions_tree = QTreeWidget()
+        self.revisions_tree.setHeaderLabels(["Date", "User", "Change"])
+        self.revisions_tree.setColumnCount(3)
+        self.revisions_tree.setUniformRowHeights(True)
+        # Make tree read-only
+        self.revisions_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
-        # Load revisions
-        if self.part:
+        # Load revisions grouped by date, then user
+        revisions_exist = False
+        if self.part and self.part_id:
             with session_scope() as session:
                 revisions = session.query(PartRevision).filter(
                     PartRevision.part_id == self.part_id
                 ).order_by(PartRevision.changed_at.desc()).all()
 
-                self.revisions_table.setRowCount(len(revisions))
-                for row, rev in enumerate(revisions):
-                    self.revisions_table.setItem(row, 0, QTableWidgetItem(
-                        rev.changed_at.strftime("%Y-%m-%d %H:%M:%S") if rev.changed_at else "-"
-                    ))
-                    self.revisions_table.setItem(row, 1, QTableWidgetItem(rev.changed_by or "-"))
-                    self.revisions_table.setItem(row, 2, QTableWidgetItem(rev.field_name))
-                    self.revisions_table.setItem(row, 3, QTableWidgetItem(rev.old_value or "-"))
-                    self.revisions_table.setItem(row, 4, QTableWidgetItem(rev.new_value or "-"))
+                if revisions:
+                    revisions_exist = True
 
-        layout.addWidget(self.revisions_table)
+                    # Group by date, then by user
+                    from collections import defaultdict
+                    by_date = defaultdict(lambda: defaultdict(list))
+
+                    for rev in revisions:
+                        date_key = rev.changed_at.strftime("%Y-%m-%d") if rev.changed_at else "Unknown"
+                        user = rev.changed_by or "system"
+                        by_date[date_key][user].append(rev)
+
+                    # Add items to tree in descending date order
+                    for date_key in sorted(by_date.keys(), reverse=True):
+                        # Create date item (collapsed by default)
+                        date_item = QTreeWidgetItem([f"📅 {date_key}", "", ""])
+                        date_item.setExpanded(False)  # Collapsed by default
+                        self.revisions_tree.addTopLevelItem(date_item)
+
+                        # Under each date, add users
+                        for user in sorted(by_date[date_key].keys()):
+                            user_item = QTreeWidgetItem(date_item)
+                            user_item.setText(0, f"👤 {user}")
+                            user_item.setExpanded(False)  # Collapsed by default
+
+                            # Under each user, add detailed changes
+                            for rev in by_date[date_key][user]:
+                                time_str = rev.changed_at.strftime("%H:%M:%S") if rev.changed_at else "-"
+                                field_display = rev.field_name
+
+                                # Format change description
+                                old_val = rev.old_value or "-"
+                                new_val = rev.new_value or "-"
+
+                                # Handle initial_creation specially
+                                if rev.change_type == "initial_creation":
+                                    change_desc = f"📝 {field_display}: {new_val}"
+                                else:
+                                    change_desc = f"📝 {field_display}: {old_val} → {new_val}"
+
+                                change_item = QTreeWidgetItem(user_item)
+                                change_item.setText(0, time_str)
+                                change_item.setText(2, change_desc)
+
+                            date_item.addChild(user_item)
+
+        if not revisions_exist:
+            # Show empty state message
+            empty_item = QTreeWidgetItem(["📋 No changes yet", "", ""])
+            empty_item.setDisabled(True)
+            self.revisions_tree.addTopLevelItem(empty_item)
+
+        # Set column widths
+        self.revisions_tree.setColumnWidth(0, 150)
+        self.revisions_tree.setColumnWidth(1, 100)
+        self.revisions_tree.setColumnWidth(2, 500)
+
+        layout.addWidget(self.revisions_tree)
         return tab
 
     def _create_dimension_input(self, layout: QVBoxLayout, label: str, min_val: float, max_val: float, initial_val=None) -> QDoubleSpinBox:
@@ -1341,6 +1383,38 @@ class PartDialog(QDialog):
                     session.add(part)
                     session.flush()
                     self._saved_part_id = part.id
+
+                    # Log initial creation as revision
+                    fields_created = []
+                    if part.name:
+                        fields_created.append(("name", "", part.name))
+                    if part.volume_cm3:
+                        fields_created.append(("volume_cm3", "", str(part.volume_cm3)))
+                    if part.material_id:
+                        fields_created.append(("material_id", "", str(part.material_id)))
+                    if part.weight_g:
+                        fields_created.append(("weight_g", "", str(part.weight_g)))
+                    if part.projected_area_cm2:
+                        fields_created.append(("projected_area_cm2", "", str(part.projected_area_cm2)))
+                    if part.wall_thickness_mm:
+                        fields_created.append(("wall_thickness_mm", "", str(part.wall_thickness_mm)))
+                    if part.surface_finish:
+                        fields_created.append(("surface_finish", "", part.surface_finish))
+                    if part.surface_finish_detail:
+                        fields_created.append(("surface_finish_detail", "", part.surface_finish_detail))
+                    if part.parts_over_runtime:
+                        fields_created.append(("parts_over_runtime", "", str(part.parts_over_runtime)))
+
+                    for field_name, old_val, new_val in fields_created:
+                        rev = PartRevision(
+                            part_id=part.id,
+                            field_name=field_name,
+                            old_value=old_val or None,
+                            new_value=str(new_val)[:500] if new_val else None,
+                            changed_by="user",
+                            change_type="initial_creation"
+                        )
+                        session.add(rev)
 
             # Save sub-BOM items
             self._save_sub_bom_items(self._saved_part_id)
