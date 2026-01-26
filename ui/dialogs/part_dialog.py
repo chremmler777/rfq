@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
     QTextEdit, QPushButton, QMessageBox, QGroupBox, QCheckBox, QSpinBox,
     QDoubleSpinBox, QScrollArea, QFrame, QTabWidget, QTableWidget, QTableWidgetItem,
-    QFileDialog, QRadioButton, QButtonGroup, QHeaderView, QWidget, QAbstractItemView, QSplitter
+    QFileDialog, QRadioButton, QButtonGroup, QHeaderView, QWidget, QAbstractItemView, QSplitter,
+    QTreeWidget, QTreeWidgetItem
 )
 from PyQt6.QtCore import Qt, QByteArray, QMimeData
 from PyQt6.QtGui import QPixmap, QIcon, QDragEnterEvent, QDropEvent, QFont
