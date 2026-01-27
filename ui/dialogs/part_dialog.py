@@ -226,19 +226,27 @@ class PartDialog(QDialog):
         layout.addWidget(sep)
 
         # Property labels (will be updated dynamically)
+        # Order matters: Name, Volume (above weight), Material, Demand, Weight, Proj Area, Wall Thick, Surface Finish
         self.prop_labels = {
             'name': self._create_prop_label('Name', ''),
             'volume': self._create_prop_label('Volume (cm³)', ''),
+            'weight': self._create_prop_label('Weight (g)', ''),
             'material': self._create_prop_label('Material', ''),
             'demand': self._create_prop_label('Total Demand', ''),
-            'weight': self._create_prop_label('Weight (g)', ''),
             'proj_area': self._create_prop_label('Proj. Area (cm²)', ''),
             'wall_thick': self._create_prop_label('Wall Thick (mm)', ''),
             'surface_finish': self._create_prop_label('Surface Finish', ''),
         }
 
-        for prop_label in self.prop_labels.values():
-            layout.addWidget(prop_label)
+        # Add labels in explicit order
+        layout.addWidget(self.prop_labels['name'])
+        layout.addWidget(self.prop_labels['volume'])
+        layout.addWidget(self.prop_labels['weight'])
+        layout.addWidget(self.prop_labels['material'])
+        layout.addWidget(self.prop_labels['demand'])
+        layout.addWidget(self.prop_labels['proj_area'])
+        layout.addWidget(self.prop_labels['wall_thick'])
+        layout.addWidget(self.prop_labels['surface_finish'])
 
         # Separator
         sep2 = QFrame()
@@ -548,51 +556,93 @@ class PartDialog(QDialog):
         return tab
 
     def _create_geometry_tab(self) -> QWidget:
-        """Create geometry/dimensions tab."""
+        """Create geometry/dimensions tab with box dimensions and projected surface choice."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # Geometry mode selector
-        mode_group = QGroupBox("Geometry Input Mode")
-        mode_layout = QVBoxLayout()
+        # Box dimensions section (ALWAYS VISIBLE)
+        box_group = QGroupBox("Box Dimensions")
+        box_layout = QVBoxLayout()
 
-        self.geometry_mode_group = QButtonGroup()
+        # Length (X) input
+        self.box_length_input = self._create_dimension_input(
+            box_layout, "Length (mm) - X (tool plane)", 0.1, 10000,
+            self.part.box_length_mm if self.part else None
+        )
 
-        self.radio_direct = QRadioButton("Direct Projected Surface (cm²)")
-        self.radio_box = QRadioButton("Box Estimate (L × W × Effective %)")
-        self.geometry_mode_group.addButton(self.radio_direct, 0)
-        self.geometry_mode_group.addButton(self.radio_box, 1)
+        # Width (Y) input
+        self.box_width_input = self._create_dimension_input(
+            box_layout, "Width (mm) - Y (tool plane)", 0.1, 10000,
+            self.part.box_width_mm if self.part else None
+        )
+
+        # Height (Z) input (for reference, ignored in calculations)
+        self.box_height_input = self._create_dimension_input(
+            box_layout, "Height (mm) - Z (reference only, not used)", 0.1, 10000,
+            self.part.box_height_mm if self.part and hasattr(self.part, 'box_height_mm') else None
+        )
+
+        box_group.setLayout(box_layout)
+        layout.addWidget(box_group)
+
+        # Projected surface mode selector
+        proj_mode_group = QGroupBox("Projected Surface Calculation")
+        proj_mode_layout = QVBoxLayout()
+
+        self.proj_surface_mode_group = QButtonGroup()
+        self.radio_proj_box = QRadioButton("Calculate from Box (X × Y × Effective %)")
+        self.radio_proj_direct = QRadioButton("Direct Entry from CAD")
+        self.proj_surface_mode_group.addButton(self.radio_proj_box, 0)
+        self.proj_surface_mode_group.addButton(self.radio_proj_direct, 1)
 
         # Connect to toggle visibility
-        self.radio_direct.toggled.connect(self._on_geometry_mode_changed)
-        self.radio_box.toggled.connect(self._on_geometry_mode_changed)
+        self.radio_proj_box.toggled.connect(self._on_proj_surface_mode_changed)
+        self.radio_proj_direct.toggled.connect(self._on_proj_surface_mode_changed)
 
-        mode_layout.addWidget(self.radio_direct)
-        mode_layout.addWidget(self.radio_box)
-        mode_group.setLayout(mode_layout)
-        layout.addWidget(mode_group)
+        proj_mode_layout.addWidget(self.radio_proj_box)
+        proj_mode_layout.addWidget(self.radio_proj_direct)
+        proj_mode_group.setLayout(proj_mode_layout)
+        layout.addWidget(proj_mode_group)
 
-        # Direct mode
-        self.direct_frame = QGroupBox("Direct Projected Surface Input")
-        direct_layout = QVBoxLayout()
+        # Box calculation mode frame
+        self.proj_box_frame = QGroupBox("Calculate from Box Dimensions")
+        proj_box_layout = QVBoxLayout()
 
-        # Projected area with source dropdown (auto-updates on change)
+        # Effective % input with calculate button
+        eff_row = QHBoxLayout()
+        eff_row.addWidget(QLabel("Effective Surface %"))
+        self.box_effective_input = QLineEdit()
+        self.box_effective_input.setPlaceholderText("100")
+        eff_row.addWidget(self.box_effective_input)
+        eff_row.addWidget(QLabel("%"))
+
+        self.btn_calc_area = QPushButton("Calculate")
+        self.btn_calc_area.clicked.connect(self._on_calculate_box_area)
+        eff_row.addWidget(self.btn_calc_area)
+        proj_box_layout.addLayout(eff_row)
+
+        self.proj_box_frame.setLayout(proj_box_layout)
+        layout.addWidget(self.proj_box_frame)
+
+        # Direct entry mode frame
+        self.proj_direct_frame = QGroupBox("Direct Projected Surface Input")
+        proj_direct_layout = QVBoxLayout()
+
+        # Projected area with source dropdown
         proj_row = QHBoxLayout()
         proj_label = QLabel("Projected Surface (cm²)")
         proj_font = QFont()
         proj_font.setBold(True)
-        proj_font.setPointSize(10)
         proj_label.setFont(proj_font)
         proj_row.addWidget(proj_label)
+
         self.proj_area_input = QLineEdit()
         self.proj_area_input.setPlaceholderText("Enter value (e.g., 100.5)")
-        # Do NOT prefill - user must enter manually
-        # Track when user edits (reset origin flag)
         self.proj_area_input.textChanged.connect(self._on_proj_area_input_changed)
         proj_row.addWidget(self.proj_area_input)
 
         self.proj_area_source_combo = QComboBox()
-        self.proj_area_source_combo.addItem("Part Data", "data")
+        self.proj_area_source_combo.addItem("Part Data (CAD)", "data")
         self.proj_area_source_combo.addItem("BOM", "bom")
         if self.part and self.part.projected_area_source:
             index = self.proj_area_source_combo.findData(self.part.projected_area_source)
@@ -610,51 +660,18 @@ class PartDialog(QDialog):
 
         proj_row.addStretch()
 
-        direct_layout.addLayout(proj_row)
-        self.direct_frame.setLayout(direct_layout)
-        layout.addWidget(self.direct_frame)
-
-        # Box mode
-        self.box_frame = QGroupBox("Box Estimate Input")
-        box_layout = QVBoxLayout()
-
-        # Length input
-        self.box_length_input = self._create_dimension_input(
-            box_layout, "Length (mm) - X dimension", 0.1, 10000,
-            self.part.box_length_mm if self.part else None
-        )
-
-        # Width input
-        self.box_width_input = self._create_dimension_input(
-            box_layout, "Width (mm) - Y dimension", 0.1, 10000,
-            self.part.box_width_mm if self.part else None
-        )
-
-        # Effective % input with calculate button
-        eff_row = QHBoxLayout()
-        eff_row.addWidget(QLabel("Effective Surface %"))
-        self.box_effective_input = QLineEdit()
-        self.box_effective_input.setPlaceholderText("100")
-        # Do NOT prefill - user must enter manually
-        eff_row.addWidget(self.box_effective_input)
-        eff_row.addWidget(QLabel("%"))
-
-        self.btn_calc_area = QPushButton("Calculate")
-        self.btn_calc_area.clicked.connect(self._on_calculate_box_area)
-        eff_row.addWidget(self.btn_calc_area)
-        box_layout.addLayout(eff_row)
-
-        self.box_frame.setLayout(box_layout)
-        layout.addWidget(self.box_frame)
+        proj_direct_layout.addLayout(proj_row)
+        self.proj_direct_frame.setLayout(proj_direct_layout)
+        layout.addWidget(self.proj_direct_frame)
 
         # Set initial mode
         if self.part and self.part.geometry_mode == "box":
-            self.radio_box.setChecked(True)
+            self.radio_proj_box.setChecked(True)
         else:
-            self.radio_direct.setChecked(True)
+            self.radio_proj_direct.setChecked(True)
 
         # Apply initial visibility
-        self._on_geometry_mode_changed()
+        self._on_proj_surface_mode_changed()
 
         # Weight & Volume
         phys_frame = QGroupBox("Weight & Volume")
@@ -686,15 +703,9 @@ class PartDialog(QDialog):
         self.volume_input.textChanged.connect(self._on_volume_input_changed)
         phys_row1.addWidget(self.volume_input)
 
-        # Submit button for volume
-        self.btn_submit_volume = QPushButton("Submit")
-        self.btn_submit_volume.setMaximumWidth(80)
-        self.btn_submit_volume.clicked.connect(self._on_submit_volume)
-        phys_row1.addWidget(self.btn_submit_volume)
-
         self.btn_calc_weight_from_volume = QPushButton("Calculate Weight")
         self.btn_calc_weight_from_volume.clicked.connect(self._on_calc_weight_from_volume)
-        self.btn_calc_weight_from_volume.setMaximumWidth(140)
+        self.btn_calc_weight_from_volume.setMaximumWidth(150)
         phys_row1.addWidget(self.btn_calc_weight_from_volume)
 
         phys_layout.addLayout(phys_row1)
@@ -714,18 +725,15 @@ class PartDialog(QDialog):
         self.weight_input.textChanged.connect(self._on_weight_input_changed)
         phys_row2.addWidget(self.weight_input)
 
-        # Submit button for weight
-        self.btn_submit_weight = QPushButton("Submit")
-        self.btn_submit_weight.setMaximumWidth(80)
-        self.btn_submit_weight.clicked.connect(self._on_submit_weight)
-        phys_row2.addWidget(self.btn_submit_weight)
-
         self.btn_calc_volume_from_weight = QPushButton("Calculate Volume")
         self.btn_calc_volume_from_weight.clicked.connect(self._on_calc_volume_from_weight)
-        self.btn_calc_volume_from_weight.setMaximumWidth(140)
+        self.btn_calc_volume_from_weight.setMaximumWidth(150)
         phys_row2.addWidget(self.btn_calc_volume_from_weight)
 
         phys_layout.addLayout(phys_row2)
+
+        # Spacing before wall thickness
+        phys_layout.addSpacing(15)
 
         # Wall Thickness with source indicator
         layout_label = QHBoxLayout()
@@ -787,6 +795,9 @@ class PartDialog(QDialog):
         improve_row.addWidget(self.wall_thick_improve_check)
         improve_row.addStretch()
         phys_layout.addLayout(improve_row)
+
+        # Spacing after wall thickness
+        phys_layout.addSpacing(10)
 
         phys_frame.setLayout(phys_layout)
         layout.addWidget(phys_frame)
@@ -1040,24 +1051,26 @@ class PartDialog(QDialog):
 
         return group, table
 
-    def _on_geometry_mode_changed(self):
-        """Handle geometry mode selection change - show/hide relevant fields."""
-        is_box_mode = self.radio_box.isChecked()
+    def _on_proj_surface_mode_changed(self):
+        """Handle projected surface mode selection change - show/hide relevant frames."""
+        is_box_mode = self.radio_proj_box.isChecked()
 
         # Show box frame, hide direct frame when box is selected
-        self.box_frame.setVisible(is_box_mode)
-        self.direct_frame.setVisible(not is_box_mode)
+        self.proj_box_frame.setVisible(is_box_mode)
+        self.proj_direct_frame.setVisible(not is_box_mode)
 
-        # When box mode selected, mark projected area as estimated
+        # When switching to box mode, reset origin to "from_box"
         if is_box_mode:
-            self._projected_area_source = "estimated"
-            self.proj_area_source_combo.setCurrentIndex(self.proj_area_source_combo.findData("estimated"))
-            self._update_proj_area_color()
+            self._proj_area_origin = "from_box"  # Will show yellow (estimated)
         else:
-            # When switching back to direct, reset to data source
-            self._projected_area_source = "data"
-            self.proj_area_source_combo.setCurrentIndex(self.proj_area_source_combo.findData("data"))
-            self._update_proj_area_color()
+            # When switching to direct mode, reset origin to manual
+            self._proj_area_origin = "manual"
+            # Clear the calculated value so it doesn't carry over
+            self.proj_area_input.blockSignals(True)  # Don't trigger textChanged
+            self.proj_area_input.clear()
+            self.proj_area_input.blockSignals(False)
+
+        self._update_validation_status()
 
     def _on_material_changed(self):
         """Handle material selection change."""
@@ -1352,7 +1365,7 @@ class PartDialog(QDialog):
             self.proj_area_input.setText(f"{area:.2f}")
             self._proj_area_origin = "from_box"  # Mark as estimated from box
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Projected area: {area:.2f} cm² calculated from box (click Submit to apply)")
+            QMessageBox.information(self, "Calculated", f"Projected area: {area:.2f} cm² calculated from box dimensions")
 
     def _get_material_density(self) -> float:
         """Get density of selected material. Returns None if invalid."""
@@ -1369,7 +1382,7 @@ class PartDialog(QDialog):
             return material.density_g_cm3
 
     def _on_calc_volume_from_weight(self):
-        """Calculate volume from weight using material density."""
+        """Calculate volume from weight using material density and submit."""
         weight = self._get_float_value(self.weight_input)
         if not weight or weight <= 0:
             QMessageBox.warning(self, "Invalid Weight", "Weight must be positive")
@@ -1384,10 +1397,10 @@ class PartDialog(QDialog):
             self.volume_input.setText(f"{volume:.2f}")
             self._volume_origin = "from_weight"  # Mark as calculated from weight
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Volume: {volume:.2f} cm³ calculated from weight (click Submit to apply)")
+            QMessageBox.information(self, "Calculated & Applied", f"Volume: {volume:.2f} cm³ calculated from weight")
 
     def _on_calc_weight_from_volume(self):
-        """Calculate weight from volume using material density."""
+        """Calculate weight from volume using material density and submit."""
         volume = self._get_float_value(self.volume_input)
         if not volume or volume <= 0:
             QMessageBox.warning(self, "Invalid Volume", "Volume must be positive")
@@ -1402,7 +1415,7 @@ class PartDialog(QDialog):
             self.weight_input.setText(f"{weight:.2f}")
             self._weight_origin = "from_volume"  # Mark as calculated from volume
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Weight: {weight:.2f} g calculated from volume (click Submit to apply)")
+            QMessageBox.information(self, "Calculated & Applied", f"Weight: {weight:.2f} g calculated from volume")
 
     def _on_submit_proj_area(self):
         """Submit projected area value to properties."""
@@ -1411,37 +1424,17 @@ class PartDialog(QDialog):
             if value <= 0:
                 QMessageBox.warning(self, "Invalid Value", "Projected area must be positive")
                 return
-            self._projected_area_source = self.proj_area_source_combo.currentData()
+            # Only update source if in direct mode
+            if self.radio_proj_direct.isChecked():
+                self._projected_area_source = self.proj_area_source_combo.currentData()
+                self._proj_area_origin = "manual"  # Reset to manual entry
+            # If in box mode, origin stays as "from_box"
             self._update_validation_status()
-            QMessageBox.information(self, "Submitted", f"Projected area: {value:.2f} cm² submitted")
+            origin_label = "(Calculated from Box)" if self._proj_area_origin == "from_box" else "(Direct Entry)"
+            QMessageBox.information(self, "Submitted", f"Projected area: {value:.2f} cm² submitted {origin_label}")
         except ValueError:
             QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
 
-    def _on_submit_volume(self):
-        """Submit volume value to properties."""
-        try:
-            value = float(self.volume_input.text().strip())
-            if value <= 0:
-                QMessageBox.warning(self, "Invalid Value", "Volume must be positive")
-                return
-            self._update_validation_status()
-            origin_label = "(Calculated)" if self._volume_origin in ("from_weight", "from_box") else "(Manual)"
-            QMessageBox.information(self, "Submitted", f"Volume: {value:.2f} cm³ submitted {origin_label}")
-        except ValueError:
-            QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
-
-    def _on_submit_weight(self):
-        """Submit weight value to properties."""
-        try:
-            value = float(self.weight_input.text().strip())
-            if value <= 0:
-                QMessageBox.warning(self, "Invalid Value", "Weight must be positive")
-                return
-            self._update_validation_status()
-            origin_label = "(Calculated)" if self._weight_origin in ("from_volume", "from_box") else "(Manual)"
-            QMessageBox.information(self, "Submitted", f"Weight: {value:.2f} g submitted {origin_label}")
-        except ValueError:
-            QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
 
     def _on_volume_input_changed(self):
         """Handle volume input change - reset origin to manual (no auto-update properties)."""
