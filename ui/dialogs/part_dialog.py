@@ -269,13 +269,14 @@ class PartDialog(QDialog):
         layout.addWidget(sep)
 
         # Property labels (will be updated dynamically)
-        # Order matters: Name, Volume (above weight), Material, Demand, Weight, Proj Area, Wall Thick, Surface Finish
+        # Order matters: Name, Volume (above weight), Material, Demand, Peak Year Demand, Weight, Proj Area, Wall Thick, Surface Finish
         self.prop_labels = {
             'name': self._create_prop_label('Name', ''),
             'volume': self._create_prop_label('Volume (cm³)', ''),
             'weight': self._create_prop_label('Weight (g)', ''),
             'material': self._create_prop_label('Material', ''),
             'demand': self._create_prop_label('Total Demand', ''),
+            'peak_year_demand': self._create_prop_label('Peak Year Demand', ''),
             'proj_area': self._create_prop_label('Proj. Area (cm²)', ''),
             'wall_thick': self._create_prop_label('Wall Thick (mm)', ''),
             'surface_finish': self._create_prop_label('Surface Finish', ''),
@@ -287,6 +288,7 @@ class PartDialog(QDialog):
         layout.addWidget(self.prop_labels['weight'])
         layout.addWidget(self.prop_labels['material'])
         layout.addWidget(self.prop_labels['demand'])
+        layout.addWidget(self.prop_labels['peak_year_demand'])
         layout.addWidget(self.prop_labels['proj_area'])
         layout.addWidget(self.prop_labels['wall_thick'])
         layout.addWidget(self.prop_labels['surface_finish'])
@@ -1206,6 +1208,7 @@ class PartDialog(QDialog):
         material_id = self.material_combo.currentData() if hasattr(self, 'material_combo') else None
         material_name = self.material_combo.currentText() if hasattr(self, 'material_combo') else ''
         demand = self.demand_peak_spin.value() if self.demand_peak_spin.value() > 0 else None
+        demand_peak = self.demand_peak_spin_year.value() if hasattr(self, 'demand_peak_spin_year') and self.demand_peak_spin_year.value() > 0 else None
 
         # Parse textbox values
         try:
@@ -1236,6 +1239,7 @@ class PartDialog(QDialog):
             volume_cm3=volume,
             material_id=material_id,
             parts_over_runtime=demand,
+            demand_peak=demand_peak,
         )
 
         missing = get_missing_fields(temp_part)
@@ -1269,6 +1273,7 @@ class PartDialog(QDialog):
         material_source = 'estimated' if (hasattr(self, 'material_estimated_check') and self.material_estimated_check.isChecked()) else 'data'
         self.prop_labels['material'].setText(self._format_prop_with_source('Material', material_name if material_id else '-', material_source, material_missing))
         self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
+        self.prop_labels['peak_year_demand'].setText(self._format_prop('Peak Year Demand', str(int(demand_peak)) if demand_peak else '-', 'Peak Year Demand' in missing))
 
         # Weight color logic: calculated from volume=grey, from box=yellow, manual with BOM=yellow, manual with CAD=none
         weight_text = f'{weight:.1f}' if weight else '-'

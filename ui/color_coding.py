@@ -74,7 +74,7 @@ def apply_source_color_to_table_item(item: QTableWidgetItem, source: str):
 def get_missing_fields(part: Part) -> list:
     """Get list of missing required fields for a part.
 
-    Required fields: name, volume_cm3, material_id, parts_over_runtime (total demand)
+    Required fields: name, volume_cm3, material_id, parts_over_runtime (total demand), demand_peak (peak year demand)
 
     Args:
         part: The Part object to check
@@ -95,6 +95,9 @@ def get_missing_fields(part: Part) -> list:
 
     if not part.parts_over_runtime or part.parts_over_runtime <= 0:
         missing.append("Total Demand")
+
+    if not part.demand_peak or part.demand_peak <= 0:
+        missing.append("Peak Year Demand")
 
     return missing
 
