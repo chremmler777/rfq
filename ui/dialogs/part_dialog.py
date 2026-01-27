@@ -179,11 +179,12 @@ class PartDialog(QDialog):
     def _connect_properties_signals(self):
         """Connect all input signals to properties panel update."""
         self.name_input.textChanged.connect(self._update_validation_status)
-        self.volume_input.textChanged.connect(self._update_validation_status)
+        # NOTE: volume_input and proj_area_input do NOT auto-update - require Submit button click
         self.material_combo.currentIndexChanged.connect(self._update_validation_status)
         self.demand_peak_spin.valueChanged.connect(self._update_validation_status)
+        # NOTE: weight_input auto-updates only if no calculation - no Submit button
         self.weight_input.textChanged.connect(self._update_validation_status)
-        self.proj_area_input.textChanged.connect(self._update_validation_status)
+        # proj_area_input does NOT auto-update - requires Submit button
         self.wall_thick_input.textChanged.connect(self._update_validation_status)
         self.surface_finish_combo.currentIndexChanged.connect(self._update_validation_status)
 
@@ -592,13 +593,13 @@ class PartDialog(QDialog):
         box_layout = QVBoxLayout()
 
         # Length input
-        self.box_length_spin = self._create_dimension_input(
+        self.box_length_input = self._create_dimension_input(
             box_layout, "Length (mm) - X dimension", 0.1, 10000,
             self.part.box_length_mm if self.part else None
         )
 
         # Width input
-        self.box_width_spin = self._create_dimension_input(
+        self.box_width_input = self._create_dimension_input(
             box_layout, "Width (mm) - Y dimension", 0.1, 10000,
             self.part.box_width_mm if self.part else None
         )
@@ -644,43 +645,50 @@ class PartDialog(QDialog):
         source_row.addStretch()
         phys_layout.addLayout(source_row)
 
-        # Weight input
+        # Volume input (FIRST - Priority)
         phys_row1 = QHBoxLayout()
-        weight_label = QLabel("Weight (g)")
-        weight_font = QFont()
-        weight_font.setBold(True)
-        weight_label.setFont(weight_font)
-        phys_row1.addWidget(weight_label)
-
-        self.weight_input = QLineEdit()
-        self.weight_input.setPlaceholderText("Enter value (e.g., 125.5)")
-        # Do NOT prefill - user must enter manually
-        phys_row1.addWidget(self.weight_input)
-
-        self.btn_calc_volume_from_weight = QPushButton("Calculate Volume")
-        self.btn_calc_volume_from_weight.clicked.connect(self._on_calc_volume_from_weight)
-        self.btn_calc_volume_from_weight.setMaximumWidth(140)
-        phys_row1.addWidget(self.btn_calc_volume_from_weight)
-
-        phys_layout.addLayout(phys_row1)
-
-        # Volume input
-        phys_row2 = QHBoxLayout()
         volume_label = QLabel("Volume (cm³)")
         volume_font = QFont()
         volume_font.setBold(True)
         volume_label.setFont(volume_font)
-        phys_row2.addWidget(volume_label)
+        phys_row1.addWidget(volume_label)
 
         self.volume_input = QLineEdit()
         self.volume_input.setPlaceholderText("Enter value (e.g., 50.5)")
         # Do NOT prefill - user must enter manually
-        phys_row2.addWidget(self.volume_input)
+        # NOTE: textChanged NOT connected - only updates on Submit
+        phys_row1.addWidget(self.volume_input)
+
+        # Submit button for volume
+        self.btn_submit_volume = QPushButton("Submit")
+        self.btn_submit_volume.setMaximumWidth(80)
+        self.btn_submit_volume.clicked.connect(self._on_submit_volume)
+        phys_row1.addWidget(self.btn_submit_volume)
 
         self.btn_calc_weight_from_volume = QPushButton("Calculate Weight")
         self.btn_calc_weight_from_volume.clicked.connect(self._on_calc_weight_from_volume)
         self.btn_calc_weight_from_volume.setMaximumWidth(140)
-        phys_row2.addWidget(self.btn_calc_weight_from_volume)
+        phys_row1.addWidget(self.btn_calc_weight_from_volume)
+
+        phys_layout.addLayout(phys_row1)
+
+        # Weight input
+        phys_row2 = QHBoxLayout()
+        weight_label = QLabel("Weight (g)")
+        weight_font = QFont()
+        weight_font.setBold(True)
+        weight_label.setFont(weight_font)
+        phys_row2.addWidget(weight_label)
+
+        self.weight_input = QLineEdit()
+        self.weight_input.setPlaceholderText("Enter value (e.g., 125.5)")
+        # Do NOT prefill - user must enter manually
+        phys_row2.addWidget(self.weight_input)
+
+        self.btn_calc_volume_from_weight = QPushButton("Calculate Volume")
+        self.btn_calc_volume_from_weight.clicked.connect(self._on_calc_volume_from_weight)
+        self.btn_calc_volume_from_weight.setMaximumWidth(140)
+        phys_row2.addWidget(self.btn_calc_volume_from_weight)
 
         phys_layout.addLayout(phys_row2)
 
@@ -1100,7 +1108,10 @@ class PartDialog(QDialog):
         # Update properties labels with missing field markers
         self.prop_labels['name'].setText(self._format_prop('Name', name if name else '-', missing_name))
         self.prop_labels['volume'].setText(self._format_prop('Volume (cm³)', f'{volume:.1f}' if volume else '-', missing_volume))
-        self.prop_labels['material'].setText(self._format_prop('Material', material_name if material_id else '-', 'Material' in missing))
+        # Material with estimated indicator
+        material_missing = 'Material' in missing
+        material_source = 'estimated' if self.material_estimated_check.isChecked() else 'data'
+        self.prop_labels['material'].setText(self._format_prop_with_source('Material', material_name if material_id else '-', material_source, material_missing))
         self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
 
         # Weight with source indicator
@@ -1340,6 +1351,18 @@ class PartDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
 
+    def _on_submit_volume(self):
+        """Submit volume value to properties."""
+        try:
+            value = float(self.volume_input.text().strip())
+            if value <= 0:
+                QMessageBox.warning(self, "Invalid Value", "Volume must be positive")
+                return
+            self._update_validation_status()
+            QMessageBox.information(self, "Submitted", f"Volume: {value:.2f} cm³ submitted")
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
+
     def _on_estimate_wall_thickness(self):
         """Estimate wall thickness with standard 2.5mm value."""
         self.wall_thick_input.setText("2.5")
@@ -1511,9 +1534,18 @@ class PartDialog(QDialog):
                     part.remarks = self.remarks_input.toPlainText().strip() or None
                     part.geometry_mode = geometry_mode
                     if geometry_mode == "box":
-                        part.box_length_mm = self.box_length_spin.value() or None
-                        part.box_width_mm = self.box_width_spin.value() or None
-                        part.box_effective_percent = self.box_effective_spin.value()
+                        try:
+                            part.box_length_mm = float(self.box_length_input.text().strip()) if self.box_length_input.text().strip() else None
+                        except (ValueError, AttributeError):
+                            part.box_length_mm = None
+                        try:
+                            part.box_width_mm = float(self.box_width_input.text().strip()) if self.box_width_input.text().strip() else None
+                        except (ValueError, AttributeError):
+                            part.box_width_mm = None
+                        try:
+                            part.box_effective_percent = float(self.box_effective_input.text().strip()) if self.box_effective_input.text().strip() else 100.0
+                        except (ValueError, AttributeError):
+                            part.box_effective_percent = 100.0
 
                     # Update image if new one uploaded
                     if self.image_data:
@@ -1562,9 +1594,9 @@ class PartDialog(QDialog):
                         notes=self.notes_input.toPlainText().strip() or None,
                         remarks=self.remarks_input.toPlainText().strip() or None,
                         geometry_mode=geometry_mode,
-                        box_length_mm=self.box_length_spin.value() if geometry_mode == "box" else None,
-                        box_width_mm=self.box_width_spin.value() if geometry_mode == "box" else None,
-                        box_effective_percent=self.box_effective_spin.value() if geometry_mode == "box" else 100.0,
+                        box_length_mm=(float(self.box_length_input.text().strip()) if self.box_length_input.text().strip() else None) if geometry_mode == "box" else None,
+                        box_width_mm=(float(self.box_width_input.text().strip()) if self.box_width_input.text().strip() else None) if geometry_mode == "box" else None,
+                        box_effective_percent=(float(self.box_effective_input.text().strip()) if self.box_effective_input.text().strip() else 100.0) if geometry_mode == "box" else 100.0,
                         image_binary=self.image_data,
                         image_filename=self.image_filename,
                         image_updated_date=datetime.now() if self.image_data else None,
