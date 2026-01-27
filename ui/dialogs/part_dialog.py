@@ -1103,7 +1103,9 @@ class PartDialog(QDialog):
         validator = QDoubleValidator(min_val, max_val, 2)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         textbox.setValidator(validator)
-        # Do NOT prefill - user must enter manually
+        # Load initial value when editing existing part
+        if initial_val:
+            textbox.setText(f"{initial_val:.2f}")
         row.addWidget(textbox)
         layout.addLayout(row)
         return textbox
@@ -1366,15 +1368,18 @@ class PartDialog(QDialog):
             self.missing_label.setText("<font color='#70AD47'><b>✓ Complete</b></font>")
 
     def _format_prop(self, label: str, value: str, is_missing: bool) -> str:
-        """Format a property label with optional red text for missing fields."""
-        color = '#FF5050' if is_missing else '#ecf0f1'
-        return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='{color}'>{value}</font>"
+        """Format a property label with optional styling for missing fields."""
+        if is_missing:
+            # Missing field - show asterisk in orange instead of red dash
+            return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='#FF9800'>*</font>"
+        # Normal field - show value in light color
+        return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='#ecf0f1'>{value}</font>"
 
     def _format_prop_with_source(self, label: str, value: str, source: str, is_missing: bool = False) -> str:
-        """Format a property with source color indicator (yellow=estimated, blue=bom, grey=calculated, white=data, red=missing)."""
+        """Format a property with source color indicator (yellow=estimated, blue=bom, grey=calculated, white=data, orange=missing)."""
         if is_missing:
-            # Missing field - show in red
-            return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='#FF5050'>{value}</font>"
+            # Missing field - show asterisk in orange instead of red
+            return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='#FF9800'>*</font>"
         elif value == '-':
             color = '#ecf0f1'
             bg = ''

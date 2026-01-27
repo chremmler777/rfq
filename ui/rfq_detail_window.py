@@ -101,9 +101,10 @@ class RFQDetailWindow(QMainWindow):
         btn_add.clicked.connect(self._on_add_part)
         toolbar.addWidget(btn_add)
 
-        btn_edit = QPushButton("Edit Part")
-        btn_edit.clicked.connect(self._on_edit_part)
-        toolbar.addWidget(btn_edit)
+        # Edit Part button removed - use right-click context menu instead
+        # btn_edit = QPushButton("Edit Part")
+        # btn_edit.clicked.connect(self._on_edit_part)
+        # toolbar.addWidget(btn_edit)
 
         btn_delete = QPushButton("Delete Part")
         btn_delete.clicked.connect(self._on_delete_part)
@@ -124,6 +125,9 @@ class RFQDetailWindow(QMainWindow):
         self.parts_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
         self.parts_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.parts_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Enable context menu for right-click
+        self.parts_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.parts_table.customContextMenuRequested.connect(self._on_parts_context_menu)
         layout.addWidget(self.parts_table)
 
         return tab
@@ -544,6 +548,30 @@ class RFQDetailWindow(QMainWindow):
         if dialog.exec():
             self._refresh_data()
             self.statusBar().showMessage("Part updated successfully")
+
+    def _on_parts_context_menu(self, position):
+        """Show context menu for parts table."""
+        from PyQt6.QtWidgets import QMenu
+
+        item = self.parts_table.itemAt(position)
+        if not item:
+            return
+
+        menu = QMenu()
+        edit_action = menu.addAction("Edit Part")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete Part")
+
+        action = menu.exec(self.parts_table.mapToGlobal(position))
+
+        if action == edit_action:
+            # Select the row and call edit
+            self.parts_table.selectRow(item.row())
+            self._on_edit_part()
+        elif action == delete_action:
+            # Select the row and call delete
+            self.parts_table.selectRow(item.row())
+            self._on_delete_part()
 
     def _on_delete_part(self):
         """Delete selected part."""
