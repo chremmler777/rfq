@@ -35,12 +35,14 @@ def test_save_part():
         # Fill in part data
         dialog.name_input.setText("Test Housing")
         dialog.part_number_input.setText("PART-001")
-        dialog.weight_spin.setValue(100.0)
-        dialog.volume_spin.setValue(110.0)
-        dialog.proj_area_spin.setValue(150.0)
-        dialog.wall_thick_spin.setValue(2.5)
-        dialog.demand_sop_spin.setValue(5000)
-        dialog.demand_peak_spin.setValue(10000)
+        dialog.material_combo.setCurrentIndex(1)  # Select first material
+        dialog.surface_finish_combo.setCurrentIndex(1)  # Select first surface finish
+        dialog.weight_input.setText("100.0")
+        dialog.volume_input.setText("110.0")
+        dialog.proj_area_input.setText("150.0")
+        dialog.wall_thick_input.setText("2.5")
+        dialog.demand_peak_spin.setValue(5000)
+        dialog.demand_peak_spin_year.setValue(10000)
         dialog.assembly_check.setChecked(True)
 
         print("✓ Filled in part data")

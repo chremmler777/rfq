@@ -1069,7 +1069,7 @@ class PartDialog(QDialog):
         textbox.setPlaceholderText(f"Enter value ({min_val}-{max_val})")
         # Add validator: allow only numbers (decimals)
         validator = QDoubleValidator(min_val, max_val, 2)
-        validator.setNotation(QDoubleValidator.StandardNotation)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         textbox.setValidator(validator)
         # Do NOT prefill - user must enter manually
         row.addWidget(textbox)
@@ -1158,8 +1158,8 @@ class PartDialog(QDialog):
         surface_finish = self.surface_finish_combo.currentData() if hasattr(self, 'surface_finish_combo') else None
 
         # All three required: name, material, surface finish
-        is_complete = (name and material_id is not None and material_id != '' and
-                      surface_finish is not None and surface_finish != '')
+        is_complete = bool(name and material_id is not None and material_id != '' and
+                          surface_finish is not None and surface_finish != '')
 
         # Enable/disable all tabs except Basic Info (tab 0)
         for tab_idx in [self.geometry_tab_index, self.manufacturing_tab_index, self.demand_tab_index, self.revisions_tab_index]:
