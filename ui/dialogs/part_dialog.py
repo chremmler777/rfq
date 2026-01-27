@@ -77,9 +77,10 @@ class PartDialog(QDialog):
         self._saved_part_id = None  # Track saved part ID to avoid detached object access
         self._wall_thickness_source = "data"  # Track if wall thickness was "data", "bom", or "estimated"
         self._projected_area_source = "data"  # Track if projected area was "data", "bom", or "estimated"
-        self._volume_calculated = False  # Track if volume was calculated
-        self._weight_calculated = False  # Track if weight was calculated
-        self._proj_area_calculated = False  # Track if projected area was calculated from box
+        # Track HOW values were created: "manual" | "from_weight" | "from_volume" | "from_box"
+        self._volume_origin = "manual"  # Default to manual entry
+        self._weight_origin = "manual"  # Default to manual entry
+        self._proj_area_origin = "manual"  # Default to manual entry
 
         self.setWindowTitle("Add Part to BOM" if not part_id else "Edit Part")
         self.setMinimumWidth(900)
@@ -586,7 +587,7 @@ class PartDialog(QDialog):
         self.proj_area_input = QLineEdit()
         self.proj_area_input.setPlaceholderText("Enter value (e.g., 100.5)")
         # Do NOT prefill - user must enter manually
-        # Auto-update properties on text change, reset calculated flag
+        # Track when user edits (reset origin flag)
         self.proj_area_input.textChanged.connect(self._on_proj_area_input_changed)
         proj_row.addWidget(self.proj_area_input)
 
@@ -600,6 +601,12 @@ class PartDialog(QDialog):
                 self._projected_area_source = self.part.projected_area_source
         self.proj_area_source_combo.currentIndexChanged.connect(self._on_proj_area_source_changed)
         proj_row.addWidget(self.proj_area_source_combo)
+
+        # Submit button for projected area
+        self.btn_submit_proj_area = QPushButton("Submit")
+        self.btn_submit_proj_area.setMaximumWidth(80)
+        self.btn_submit_proj_area.clicked.connect(self._on_submit_proj_area)
+        proj_row.addWidget(self.btn_submit_proj_area)
 
         proj_row.addStretch()
 
@@ -675,9 +682,15 @@ class PartDialog(QDialog):
         self.volume_input = QLineEdit()
         self.volume_input.setPlaceholderText("Enter value (e.g., 50.5)")
         # Do NOT prefill - user must enter manually
-        # Auto-update on manual input, reset calculated flag
+        # Track when user edits (reset origin flag)
         self.volume_input.textChanged.connect(self._on_volume_input_changed)
         phys_row1.addWidget(self.volume_input)
+
+        # Submit button for volume
+        self.btn_submit_volume = QPushButton("Submit")
+        self.btn_submit_volume.setMaximumWidth(80)
+        self.btn_submit_volume.clicked.connect(self._on_submit_volume)
+        phys_row1.addWidget(self.btn_submit_volume)
 
         self.btn_calc_weight_from_volume = QPushButton("Calculate Weight")
         self.btn_calc_weight_from_volume.clicked.connect(self._on_calc_weight_from_volume)
@@ -697,9 +710,15 @@ class PartDialog(QDialog):
         self.weight_input = QLineEdit()
         self.weight_input.setPlaceholderText("Enter value (e.g., 125.5)")
         # Do NOT prefill - user must enter manually
-        # Auto-update on manual input, reset calculated flag
+        # Track when user edits (reset origin flag)
         self.weight_input.textChanged.connect(self._on_weight_input_changed)
         phys_row2.addWidget(self.weight_input)
+
+        # Submit button for weight
+        self.btn_submit_weight = QPushButton("Submit")
+        self.btn_submit_weight.setMaximumWidth(80)
+        self.btn_submit_weight.clicked.connect(self._on_submit_weight)
+        phys_row2.addWidget(self.btn_submit_weight)
 
         self.btn_calc_volume_from_weight = QPushButton("Calculate Volume")
         self.btn_calc_volume_from_weight.clicked.connect(self._on_calc_volume_from_weight)
@@ -1125,24 +1144,45 @@ class PartDialog(QDialog):
 
         # Update properties labels with missing field markers
         self.prop_labels['name'].setText(self._format_prop('Name', name if name else '-', missing_name))
-        # Volume with calculated indicator
+
+        # Volume color logic: calculated from weight=grey, from box=yellow, manual with BOM=yellow, manual with CAD=none
         volume_text = f'{volume:.1f}' if volume else '-'
-        volume_source = 'calculated' if self._volume_calculated else 'data'
+        if self._volume_origin == "from_weight":
+            volume_source = "calculated"  # grey
+        elif self._volume_origin == "from_box":
+            volume_source = "estimated"  # yellow
+        elif self._volume_origin == "manual" and hasattr(self, 'weight_volume_source_combo') and self.weight_volume_source_combo.currentData() == "bom":
+            volume_source = "bom"  # yellow
+        else:
+            volume_source = "data"  # no color
         self.prop_labels['volume'].setText(self._format_prop_with_source('Volume (cm³)', volume_text, volume_source, missing_volume))
+
         # Material with estimated indicator
         material_missing = 'Material' in missing
         material_source = 'estimated' if self.material_estimated_check.isChecked() else 'data'
         self.prop_labels['material'].setText(self._format_prop_with_source('Material', material_name if material_id else '-', material_source, material_missing))
         self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
 
-        # Weight with source indicator (check if calculated)
+        # Weight color logic: calculated from volume=grey, from box=yellow, manual with BOM=yellow, manual with CAD=none
         weight_text = f'{weight:.1f}' if weight else '-'
-        weight_source = 'calculated' if self._weight_calculated else (self.weight_volume_source_combo.currentData() if hasattr(self, 'weight_volume_source_combo') else 'data')
+        if self._weight_origin == "from_volume":
+            weight_source = "calculated"  # grey
+        elif self._weight_origin == "from_box":
+            weight_source = "estimated"  # yellow
+        elif self._weight_origin == "manual" and hasattr(self, 'weight_volume_source_combo') and self.weight_volume_source_combo.currentData() == "bom":
+            weight_source = "bom"  # yellow
+        else:
+            weight_source = "data"  # no color
         self.prop_labels['weight'].setText(self._format_prop_with_source('Weight (g)', weight_text, weight_source, missing_weight))
 
-        # Projected area with source color and missing indicator (check if calculated from box)
+        # Projected area color logic: calculated from box=yellow, manual with BOM=yellow, manual with CAD=none
         proj_area_text = f'{proj_area:.1f}' if proj_area else '-'
-        proj_area_source = 'calculated' if self._proj_area_calculated else (self._projected_area_source if hasattr(self, '_projected_area_source') else 'data')
+        if self._proj_area_origin == "from_box":
+            proj_area_source = "estimated"  # yellow (box estimate = estimated)
+        elif self._proj_area_origin == "manual" and self._projected_area_source == "bom":
+            proj_area_source = "bom"  # yellow
+        else:
+            proj_area_source = "data"  # no color
         self.prop_labels['proj_area'].setText(self._format_prop_with_source('Proj. Area (cm²)', proj_area_text, proj_area_source, missing_proj_area))
 
         # Wall thickness with source color and missing indicator
@@ -1310,9 +1350,9 @@ class PartDialog(QDialog):
 
         if area:
             self.proj_area_input.setText(f"{area:.2f}")
-            self._proj_area_calculated = True  # Mark as calculated
+            self._proj_area_origin = "from_box"  # Mark as estimated from box
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Projected area: {area:.2f} cm² calculated from box dimensions")
+            QMessageBox.information(self, "Calculated", f"Projected area: {area:.2f} cm² calculated from box (click Submit to apply)")
 
     def _get_material_density(self) -> float:
         """Get density of selected material. Returns None if invalid."""
@@ -1342,9 +1382,9 @@ class PartDialog(QDialog):
         volume = auto_calculate_volume(weight, density)
         if volume:
             self.volume_input.setText(f"{volume:.2f}")
-            self._volume_calculated = True  # Mark as calculated
+            self._volume_origin = "from_weight"  # Mark as calculated from weight
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Volume: {volume:.2f} cm³ calculated from weight")
+            QMessageBox.information(self, "Calculated", f"Volume: {volume:.2f} cm³ calculated from weight (click Submit to apply)")
 
     def _on_calc_weight_from_volume(self):
         """Calculate weight from volume using material density."""
@@ -1360,9 +1400,9 @@ class PartDialog(QDialog):
         weight = auto_calculate_weight(volume, density)
         if weight:
             self.weight_input.setText(f"{weight:.2f}")
-            self._weight_calculated = True  # Mark as calculated
+            self._weight_origin = "from_volume"  # Mark as calculated from volume
             self._update_validation_status()
-            QMessageBox.information(self, "Calculated", f"Weight: {weight:.2f} g calculated from volume")
+            QMessageBox.information(self, "Calculated", f"Weight: {weight:.2f} g calculated from volume (click Submit to apply)")
 
     def _on_submit_proj_area(self):
         """Submit projected area value to properties."""
@@ -1385,24 +1425,35 @@ class PartDialog(QDialog):
                 QMessageBox.warning(self, "Invalid Value", "Volume must be positive")
                 return
             self._update_validation_status()
-            QMessageBox.information(self, "Submitted", f"Volume: {value:.2f} cm³ submitted")
+            origin_label = "(Calculated)" if self._volume_origin in ("from_weight", "from_box") else "(Manual)"
+            QMessageBox.information(self, "Submitted", f"Volume: {value:.2f} cm³ submitted {origin_label}")
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
+
+    def _on_submit_weight(self):
+        """Submit weight value to properties."""
+        try:
+            value = float(self.weight_input.text().strip())
+            if value <= 0:
+                QMessageBox.warning(self, "Invalid Value", "Weight must be positive")
+                return
+            self._update_validation_status()
+            origin_label = "(Calculated)" if self._weight_origin in ("from_volume", "from_box") else "(Manual)"
+            QMessageBox.information(self, "Submitted", f"Weight: {value:.2f} g submitted {origin_label}")
         except ValueError:
             QMessageBox.warning(self, "Invalid Input", "Please enter a valid number")
 
     def _on_volume_input_changed(self):
-        """Handle volume input change - reset calculated flag and update properties."""
-        self._volume_calculated = False
-        self._update_validation_status()
+        """Handle volume input change - reset origin to manual (no auto-update properties)."""
+        self._volume_origin = "manual"
 
     def _on_weight_input_changed(self):
-        """Handle weight input change - reset calculated flag and update properties."""
-        self._weight_calculated = False
-        self._update_validation_status()
+        """Handle weight input change - reset origin to manual (no auto-update properties)."""
+        self._weight_origin = "manual"
 
     def _on_proj_area_input_changed(self):
-        """Handle projected area input change - reset calculated flag and update properties."""
-        self._proj_area_calculated = False
-        self._update_validation_status()
+        """Handle projected area input change - reset origin to manual (no auto-update properties)."""
+        self._proj_area_origin = "manual"
 
     def _on_estimate_wall_thickness(self):
         """Estimate wall thickness with standard 2.5mm value."""
