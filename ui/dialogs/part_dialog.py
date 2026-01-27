@@ -179,12 +179,12 @@ class PartDialog(QDialog):
     def _connect_properties_signals(self):
         """Connect all input signals to properties panel update."""
         self.name_input.textChanged.connect(self._update_validation_status)
-        self.volume_spin.valueChanged.connect(self._update_validation_status)
+        self.volume_input.textChanged.connect(self._update_validation_status)
         self.material_combo.currentIndexChanged.connect(self._update_validation_status)
         self.demand_peak_spin.valueChanged.connect(self._update_validation_status)
-        self.weight_spin.valueChanged.connect(self._update_validation_status)
-        self.proj_area_spin.valueChanged.connect(self._update_validation_status)
-        self.wall_thick_spin.valueChanged.connect(self._update_validation_status)
+        self.weight_input.textChanged.connect(self._update_validation_status)
+        self.proj_area_input.textChanged.connect(self._update_validation_status)
+        self.wall_thick_input.textChanged.connect(self._update_validation_status)
         self.surface_finish_combo.currentIndexChanged.connect(self._update_validation_status)
 
     def _create_properties_panel(self) -> QFrame:
@@ -251,8 +251,51 @@ class PartDialog(QDialog):
         layout.addSpacing(5)
         self._add_color_legend(layout)
 
+        # Article image at bottom
+        layout.addSpacing(10)
+        self._add_article_image_section(layout)
+
         layout.addStretch()
         return panel
+
+    def _add_article_image_section(self, layout: QVBoxLayout):
+        """Add article/part image display section at bottom of properties panel."""
+        img_label = QLabel("Part Image")
+        img_label_font = QFont()
+        img_label_font.setBold(True)
+        img_label_font.setPointSize(9)
+        img_label.setFont(img_label_font)
+        img_label.setStyleSheet("color: #bdc3c7;")
+        layout.addWidget(img_label)
+
+        # Image display frame
+        self.props_image_label = QLabel()
+        self.props_image_label.setMinimumHeight(80)
+        self.props_image_label.setMaximumHeight(100)
+        self.props_image_label.setStyleSheet(
+            "QLabel { "
+            "background-color: #1c2833; "
+            "border: 1px solid #34495e; "
+            "border-radius: 4px; "
+            "padding: 4px; "
+            "} "
+        )
+        self.props_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.props_image_label.setText("No image")
+        self.props_image_label.setStyleSheet(
+            "QLabel { "
+            "background-color: #1c2833; "
+            "border: 1px solid #34495e; "
+            "border-radius: 4px; "
+            "padding: 4px; "
+            "color: #7f8c8d; "
+            "} "
+        )
+        layout.addWidget(self.props_image_label)
+
+        # Update image display if part exists
+        if self.part and self.part.image_binary:
+            self._update_properties_image()
 
     def _add_color_legend(self, layout: QVBoxLayout):
         """Add color legend to show meaning of colors."""
@@ -511,12 +554,10 @@ class PartDialog(QDialog):
         # Projected area with source dropdown
         proj_row = QHBoxLayout()
         proj_row.addWidget(QLabel("Projected Surface (cm²)"))
-        self.proj_area_spin = QDoubleSpinBox()
-        self.proj_area_spin.setRange(0.1, 10000)
-        self.proj_area_spin.setDecimals(2)
-        if self.part and self.part.projected_area_cm2:
-            self.proj_area_spin.setValue(self.part.projected_area_cm2)
-        proj_row.addWidget(self.proj_area_spin)
+        self.proj_area_input = QLineEdit()
+        self.proj_area_input.setPlaceholderText("Enter value (e.g., 100.5)")
+        # Do NOT prefill - user must enter manually
+        proj_row.addWidget(self.proj_area_input)
 
         self.proj_area_source_combo = QComboBox()
         self.proj_area_source_combo.addItem("Part Data", "data")
@@ -585,32 +626,52 @@ class PartDialog(QDialog):
 
         phys_row1 = QHBoxLayout()
         phys_row1.addWidget(QLabel("Weight (g)"))
-        self.weight_spin = QDoubleSpinBox()
-        self.weight_spin.setRange(0.1, 100000)
-        self.weight_spin.setDecimals(2)
-        if self.part and self.part.weight_g:
-            self.weight_spin.setValue(self.part.weight_g)
-        phys_row1.addWidget(self.weight_spin)
+        self.weight_input = QLineEdit()
+        self.weight_input.setPlaceholderText("Enter value (e.g., 125.5)")
+        # Do NOT prefill - user must enter manually
+        phys_row1.addWidget(self.weight_input)
 
-        self.btn_vol_from_weight = QPushButton("→ Volume")
+        # Weight source dropdown
+        self.weight_source_combo = QComboBox()
+        self.weight_source_combo.addItem("Part Data", "data")
+        self.weight_source_combo.addItem("BOM", "bom")
+        if self.part and self.part.weight_g:
+            # Only autofill when editing existing part
+            index = self.weight_source_combo.findData("data")  # Default to data
+            if index >= 0:
+                self.weight_source_combo.setCurrentIndex(index)
+        self.weight_source_combo.currentIndexChanged.connect(self._update_validation_status)
+        phys_row1.addWidget(self.weight_source_combo)
+
+        self.btn_vol_from_weight = QPushButton("→ Vol")
         self.btn_vol_from_weight.clicked.connect(self._on_calc_volume_from_weight)
-        self.btn_vol_from_weight.setMaximumWidth(100)
+        self.btn_vol_from_weight.setMaximumWidth(70)
         phys_row1.addWidget(self.btn_vol_from_weight)
 
         phys_layout.addLayout(phys_row1)
 
         phys_row2 = QHBoxLayout()
         phys_row2.addWidget(QLabel("Volume (cm³)"))
-        self.volume_spin = QDoubleSpinBox()
-        self.volume_spin.setRange(0.1, 1000000)
-        self.volume_spin.setDecimals(2)
-        if self.part and self.part.volume_cm3:
-            self.volume_spin.setValue(self.part.volume_cm3)
-        phys_row2.addWidget(self.volume_spin)
+        self.volume_input = QLineEdit()
+        self.volume_input.setPlaceholderText("Enter value (e.g., 50.5)")
+        # Do NOT prefill - user must enter manually
+        phys_row2.addWidget(self.volume_input)
 
-        self.btn_weight_from_vol = QPushButton("← Weight")
+        # Volume source dropdown
+        self.volume_source_combo = QComboBox()
+        self.volume_source_combo.addItem("Part Data", "data")
+        self.volume_source_combo.addItem("BOM", "bom")
+        if self.part and self.part.volume_cm3:
+            # Only autofill when editing existing part
+            index = self.volume_source_combo.findData("data")  # Default to data
+            if index >= 0:
+                self.volume_source_combo.setCurrentIndex(index)
+        self.volume_source_combo.currentIndexChanged.connect(self._update_validation_status)
+        phys_row2.addWidget(self.volume_source_combo)
+
+        self.btn_weight_from_vol = QPushButton("← Wt")
         self.btn_weight_from_vol.clicked.connect(self._on_calc_weight_from_volume)
-        self.btn_weight_from_vol.setMaximumWidth(100)
+        self.btn_weight_from_vol.setMaximumWidth(70)
         phys_row2.addWidget(self.btn_weight_from_vol)
 
         phys_layout.addLayout(phys_row2)
@@ -635,12 +696,10 @@ class PartDialog(QDialog):
         separator3.setStyleSheet("color: #cccccc;")
         phys_row3.addWidget(separator3)
 
-        self.wall_thick_spin = QDoubleSpinBox()
-        self.wall_thick_spin.setRange(0.5, 10)
-        self.wall_thick_spin.setDecimals(2)
-        if self.part and self.part.wall_thickness_mm:
-            self.wall_thick_spin.setValue(self.part.wall_thickness_mm)
-        phys_row3.addWidget(self.wall_thick_spin)
+        self.wall_thick_input = QLineEdit()
+        self.wall_thick_input.setPlaceholderText("e.g., 2.5")
+        # Do NOT prefill - user must enter manually
+        phys_row3.addWidget(self.wall_thick_input)
 
         # Wall thickness source dropdown
         self.wall_thick_source_combo = QComboBox()
@@ -980,15 +1039,33 @@ class PartDialog(QDialog):
 
     def _update_validation_status(self):
         """Update properties panel with current part data and highlight missing fields."""
-        # Gather current values
+        # Gather current values from textboxes and inputs
         name = self.name_input.text().strip()
-        volume = self.volume_spin.value() if self.volume_spin.value() > 0 else None
         material_id = self.material_combo.currentData()
         material_name = self.material_combo.currentText()
         demand = self.demand_peak_spin.value() if self.demand_peak_spin.value() > 0 else None
-        weight = self.weight_spin.value() if self.weight_spin.value() > 0 else None
-        proj_area = self.proj_area_spin.value() if self.proj_area_spin.value() > 0 else None
-        wall_thick = self.wall_thick_spin.value() if self.wall_thick_spin.value() > 0 else None
+
+        # Parse textbox values
+        try:
+            volume = float(self.volume_input.text().strip()) if self.volume_input.text().strip() else None
+        except ValueError:
+            volume = None
+
+        try:
+            weight = float(self.weight_input.text().strip()) if self.weight_input.text().strip() else None
+        except ValueError:
+            weight = None
+
+        try:
+            proj_area = float(self.proj_area_input.text().strip()) if self.proj_area_input.text().strip() else None
+        except ValueError:
+            proj_area = None
+
+        try:
+            wall_thick = float(self.wall_thick_input.text().strip()) if self.wall_thick_input.text().strip() else None
+        except ValueError:
+            wall_thick = None
+
         surface_finish = self.surface_finish_combo.currentText()
 
         # Create temp part for validation
@@ -1001,31 +1078,60 @@ class PartDialog(QDialog):
 
         missing = get_missing_fields(temp_part)
 
-        # Update properties labels
+        # Track which fields are missing
+        missing_volume = volume is None
+        missing_weight = weight is None
+        missing_proj_area = proj_area is None
+        missing_wall_thick = wall_thick is None
+
+        # Update properties labels with missing field markers
         self.prop_labels['name'].setText(self._format_prop('Name', name, 'name' in missing))
-        self.prop_labels['volume'].setText(self._format_prop('Volume (cm³)', f'{volume:.1f}' if volume else '-', 'Volume' in missing))
+        self.prop_labels['volume'].setText(self._format_prop('Volume (cm³)', f'{volume:.1f}' if volume else '-', missing_volume))
         self.prop_labels['material'].setText(self._format_prop('Material', material_name if material_id else '-', 'Material' in missing))
         self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
-        self.prop_labels['weight'].setText(self._format_prop('Weight (g)', f'{weight:.1f}' if weight else '-', False))
 
-        # Projected area with source color
+        # Weight with source indicator
+        weight_text = f'{weight:.1f}' if weight else '-'
+        weight_source = self.weight_source_combo.currentData() if hasattr(self, 'weight_source_combo') else 'data'
+        self.prop_labels['weight'].setText(self._format_prop_with_source('Weight (g)', weight_text, weight_source, missing_weight))
+
+        # Projected area with source color and missing indicator
         proj_area_text = f'{proj_area:.1f}' if proj_area else '-'
         proj_area_source = self._projected_area_source if hasattr(self, '_projected_area_source') else 'data'
-        self.prop_labels['proj_area'].setText(self._format_prop_with_source('Proj. Area (cm²)', proj_area_text, proj_area_source))
+        self.prop_labels['proj_area'].setText(self._format_prop_with_source('Proj. Area (cm²)', proj_area_text, proj_area_source, missing_proj_area))
 
-        # Wall thickness with source color
+        # Wall thickness with source color and missing indicator
         wall_thick_text = f'{wall_thick:.2f}' if wall_thick else '-'
         wall_thick_source = self._wall_thickness_source if hasattr(self, '_wall_thickness_source') else 'data'
-        self.prop_labels['wall_thick'].setText(self._format_prop_with_source('Wall Thick (mm)', wall_thick_text, wall_thick_source))
+        self.prop_labels['wall_thick'].setText(self._format_prop_with_source('Wall Thick (mm)', wall_thick_text, wall_thick_source, missing_wall_thick))
 
-        # Surface finish with estimated indicator
+        # Surface finish with estimated indicator and missing marker
         sf_text = surface_finish if surface_finish else '-'
         sf_source = 'estimated' if self.surface_finish_estimated_check.isChecked() else 'data'
-        self.prop_labels['surface_finish'].setText(self._format_prop_with_source('Surface Finish', sf_text, sf_source))
+        sf_missing = not surface_finish or surface_finish == ''
+        self.prop_labels['surface_finish'].setText(self._format_prop_with_source('Surface Finish', sf_text, sf_source, sf_missing))
 
-        # Update missing fields indicator
-        if missing:
-            missing_text = ", ".join(missing)
+        # Update missing fields indicator (all missing fields)
+        all_missing = []
+        if 'name' in missing:
+            all_missing.append('Name')
+        if missing_volume:
+            all_missing.append('Volume')
+        if 'Material' in missing:
+            all_missing.append('Material')
+        if 'Total Demand' in missing:
+            all_missing.append('Demand')
+        if missing_weight:
+            all_missing.append('Weight')
+        if missing_proj_area:
+            all_missing.append('Proj. Area')
+        if missing_wall_thick:
+            all_missing.append('Wall Thickness')
+        if sf_missing:
+            all_missing.append('Surface Finish')
+
+        if all_missing:
+            missing_text = ", ".join(all_missing)
             self.missing_label.setText(f"<font color='#FF5050'><b>Missing:</b> {missing_text}</font>")
         else:
             self.missing_label.setText("<font color='#70AD47'><b>✓ Complete</b></font>")
@@ -1035,9 +1141,12 @@ class PartDialog(QDialog):
         color = '#FF5050' if is_missing else '#ecf0f1'
         return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='{color}'>{value}</font>"
 
-    def _format_prop_with_source(self, label: str, value: str, source: str) -> str:
-        """Format a property with source color indicator (yellow=estimated, blue=bom, white=data)."""
-        if value == '-':
+    def _format_prop_with_source(self, label: str, value: str, source: str, is_missing: bool = False) -> str:
+        """Format a property with source color indicator (yellow=estimated, blue=bom, white=data, red=missing)."""
+        if is_missing:
+            # Missing field - show in red
+            return f"<b style='color: #ecf0f1;'>{label}:</b> <font color='#FF5050'>{value}</font>"
+        elif value == '-':
             color = '#ecf0f1'
             bg = ''
         elif source == 'estimated':
@@ -1074,11 +1183,15 @@ class PartDialog(QDialog):
                 self.image_data = f.read()
             self.image_filename = Path(file_path).name
 
-            # Show preview
+            # Show preview in main image label
             pixmap = QPixmap(file_path)
             self.image_label.setPixmap(pixmap.scaledToHeight(150, Qt.TransformationMode.SmoothTransformation))
             self.image_label.setText("")
             self.btn_delete_image.setEnabled(True)
+
+            # Update properties panel image
+            self._update_properties_image()
+
             QMessageBox.information(self, "Image Loaded", f"Image '{self.image_filename}' loaded successfully")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load image: {str(e)}")
@@ -1103,7 +1216,29 @@ class PartDialog(QDialog):
             self.image_label.setText("No image\nDrag-drop or click Upload")
             self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.btn_delete_image.setEnabled(False)
+
+            # Update properties panel image
+            self.props_image_label.setText("No image")
+            self.props_image_label.setPixmap(QPixmap())
+
             QMessageBox.information(self, "Image Deleted", "Image has been removed")
+
+    def _update_properties_image(self):
+        """Update the properties panel image display."""
+        if self.image_data:
+            # Convert image data to pixmap
+            pixmap = QPixmap()
+            pixmap.loadFromData(self.image_data)
+            if not pixmap.isNull():
+                # Scale to fit in the properties panel
+                scaled_pixmap = pixmap.scaledToHeight(80, Qt.TransformationMode.SmoothTransformation)
+                self.props_image_label.setPixmap(scaled_pixmap)
+                self.props_image_label.setText("")
+            else:
+                self.props_image_label.setText("Image error")
+        else:
+            self.props_image_label.setPixmap(QPixmap())
+            self.props_image_label.setText("No image")
 
     def _on_calculate_box_area(self):
         """Calculate projected area from box dimensions."""
@@ -1138,8 +1273,8 @@ class PartDialog(QDialog):
 
     def _on_calc_volume_from_weight(self):
         """Calculate volume from weight using material density."""
-        weight = self.weight_spin.value()
-        if weight <= 0:
+        weight = self._get_float_value(self.weight_input)
+        if not weight or weight <= 0:
             QMessageBox.warning(self, "Invalid Weight", "Weight must be positive")
             return
 
@@ -1149,13 +1284,13 @@ class PartDialog(QDialog):
 
         volume = auto_calculate_volume(weight, density)
         if volume:
-            self.volume_spin.setValue(volume)
-            QMessageBox.information(self, "Calculated", f"Volume: {volume} cm³")
+            self.volume_input.setText(f"{volume:.2f}")
+            QMessageBox.information(self, "Calculated", f"Volume: {volume:.2f} cm³")
 
     def _on_calc_weight_from_volume(self):
         """Calculate weight from volume using material density."""
-        volume = self.volume_spin.value()
-        if volume <= 0:
+        volume = self._get_float_value(self.volume_input)
+        if not volume or volume <= 0:
             QMessageBox.warning(self, "Invalid Volume", "Volume must be positive")
             return
 
@@ -1165,12 +1300,12 @@ class PartDialog(QDialog):
 
         weight = auto_calculate_weight(volume, density)
         if weight:
-            self.weight_spin.setValue(weight)
+            self.weight_input.setText(f"{weight:.2f}")
             QMessageBox.information(self, "Calculated", f"Weight: {weight} g")
 
     def _on_estimate_wall_thickness(self):
         """Estimate wall thickness with standard 2.5mm value."""
-        self.wall_thick_spin.setValue(2.5)
+        self.wall_thick_input.setText("2.5")
         self._wall_thickness_source = "estimated"
         index = self.wall_thick_source_combo.findData("estimated")
         if index >= 0:
@@ -1265,6 +1400,14 @@ class PartDialog(QDialog):
             row = selected[0].row()
             self.overmold_bom_table.removeRow(row)
 
+    def _get_float_value(self, text_input: QLineEdit) -> float:
+        """Safely parse float from textbox, return None if invalid/empty."""
+        try:
+            val = text_input.text().strip()
+            return float(val) if val else None
+        except (ValueError, AttributeError):
+            return None
+
     def _on_save(self):
         """Save part."""
         name = self.name_input.text().strip()
@@ -1275,6 +1418,12 @@ class PartDialog(QDialog):
 
         material_id = self.material_combo.currentData()
         geometry_mode = "box" if self.radio_box.isChecked() else "direct"
+
+        # Parse textbox values
+        weight = self._get_float_value(self.weight_input)
+        volume = self._get_float_value(self.volume_input)
+        proj_area = self._get_float_value(self.proj_area_input)
+        wall_thick = self._get_float_value(self.wall_thick_input)
 
         try:
             with session_scope() as session:
@@ -1288,12 +1437,12 @@ class PartDialog(QDialog):
                     # Check each field for changes
                     if part.name != name:
                         changes.append(("name", part.name, name))
-                    if part.weight_g != self.weight_spin.value():
-                        changes.append(("weight_g", str(part.weight_g), str(self.weight_spin.value())))
-                    if part.volume_cm3 != self.volume_spin.value():
-                        changes.append(("volume_cm3", str(part.volume_cm3), str(self.volume_spin.value())))
-                    if part.projected_area_cm2 != self.proj_area_spin.value():
-                        changes.append(("projected_area_cm2", str(part.projected_area_cm2), str(self.proj_area_spin.value())))
+                    if part.weight_g != weight:
+                        changes.append(("weight_g", str(part.weight_g), str(weight)))
+                    if part.volume_cm3 != volume:
+                        changes.append(("volume_cm3", str(part.volume_cm3), str(volume)))
+                    if part.projected_area_cm2 != proj_area:
+                        changes.append(("projected_area_cm2", str(part.projected_area_cm2), str(proj_area)))
                     if part.image_filename != self.image_filename:
                         changes.append(("image_filename", part.image_filename or "None", self.image_filename or "None"))
 
@@ -1301,10 +1450,10 @@ class PartDialog(QDialog):
                     part.name = name
                     part.part_number = self.part_number_input.text().strip() or None
                     part.material_id = material_id
-                    part.weight_g = self.weight_spin.value() or None
-                    part.volume_cm3 = self.volume_spin.value() or None
-                    part.projected_area_cm2 = self.proj_area_spin.value() or None
-                    part.wall_thickness_mm = self.wall_thick_spin.value() or None
+                    part.weight_g = weight
+                    part.volume_cm3 = volume
+                    part.projected_area_cm2 = proj_area
+                    part.wall_thickness_mm = wall_thick
                     part.wall_thickness_source = self._wall_thickness_source
                     part.wall_thickness_needs_improvement = self.wall_thick_improve_check.isChecked()
                     # Projected area source (V2.0)
@@ -1353,10 +1502,10 @@ class PartDialog(QDialog):
                         name=name,
                         part_number=self.part_number_input.text().strip() or None,
                         material_id=material_id,
-                        weight_g=self.weight_spin.value() or None,
-                        volume_cm3=self.volume_spin.value() or None,
-                        projected_area_cm2=self.proj_area_spin.value() or None,
-                        wall_thickness_mm=self.wall_thick_spin.value() or None,
+                        weight_g=weight,
+                        volume_cm3=volume,
+                        projected_area_cm2=proj_area,
+                        wall_thickness_mm=wall_thick,
                         wall_thickness_source=self._wall_thickness_source,
                         wall_thickness_needs_improvement=self.wall_thick_improve_check.isChecked(),
                         # Projected area source (V2.0)
