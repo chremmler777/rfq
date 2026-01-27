@@ -1254,8 +1254,8 @@ class PartDialog(QDialog):
         area = mode.calculate_projected_area()
 
         if area:
-            self.proj_area_spin.setValue(area)
-            QMessageBox.information(self, "Calculated", f"Projected area: {area} cm²")
+            self.proj_area_input.setText(f"{area:.2f}")
+            QMessageBox.information(self, "Calculated", f"Projected area: {area:.2f} cm²")
 
     def _get_material_density(self) -> float:
         """Get density of selected material. Returns None if invalid."""
@@ -1333,14 +1333,16 @@ class PartDialog(QDialog):
             self.wall_thick_source_combo.setCurrentIndex(self.wall_thick_source_combo.findData("data"))
 
     def _update_wall_thickness_color(self):
-        """Update wall thickness spin box color based on source."""
-        from ui.color_coding import apply_source_color_to_widget
-        apply_source_color_to_widget(self.wall_thick_spin, self._wall_thickness_source)
+        """Update wall thickness display color based on source (handled in properties panel)."""
+        # Color display now handled by properties panel via _format_prop_with_source()
+        # This method kept for compatibility but no longer applies colors to widgets
+        pass
 
     def _update_proj_area_color(self):
-        """Update projected area spin box color based on source."""
-        from ui.color_coding import apply_source_color_to_widget
-        apply_source_color_to_widget(self.proj_area_spin, self._projected_area_source)
+        """Update projected area display color based on source (handled in properties panel)."""
+        # Color display now handled by properties panel via _format_prop_with_source()
+        # This method kept for compatibility but no longer applies colors to widgets
+        pass
 
     def _load_sub_bom_items(self):
         """Load existing sub-BOM items from part."""
