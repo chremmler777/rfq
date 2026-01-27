@@ -149,6 +149,13 @@ class PartDialog(QDialog):
         revisions_widget = self._create_revisions_tab()
         tabs.addTab(revisions_widget, "Revisions")
 
+        # Store tab references for enabling/disabling based on material
+        self.tabs_widget = tabs
+        self.geometry_tab_index = 1
+        self.manufacturing_tab_index = 2
+        self.demand_tab_index = 3
+        self.revisions_tab_index = 4
+
         content_layout.addWidget(tabs, stretch=1)
 
         # RIGHT: Properties panel (persistent, non-scrolling)
@@ -179,6 +186,9 @@ class PartDialog(QDialog):
 
         # Initial properties update
         self._update_validation_status()
+
+        # For new parts, grey out tabs until material is selected
+        self._check_material_and_enable_tabs()
 
     def _connect_properties_signals(self):
         """Connect all input signals to properties panel update."""
@@ -747,24 +757,12 @@ class PartDialog(QDialog):
 
         phys_row3 = QHBoxLayout()
 
-        # Estimated checkbox on left
-        self.wall_thick_source_check = QCheckBox("Estimated")
-        self.wall_thick_source_check.setMaximumWidth(120)
-        phys_row3.addWidget(self.wall_thick_source_check)
-
-        # Visual separator
-        separator3 = QFrame()
-        separator3.setFrameShape(QFrame.Shape.VLine)
-        separator3.setLineWidth(2)
-        separator3.setStyleSheet("color: #cccccc;")
-        phys_row3.addWidget(separator3)
-
         self.wall_thick_input = QLineEdit()
         self.wall_thick_input.setPlaceholderText("e.g., 2.5")
         # Do NOT prefill - user must enter manually
         phys_row3.addWidget(self.wall_thick_input)
 
-        # Wall thickness source dropdown
+        # Wall thickness source dropdown (replaces checkbox - Data, BOM, or Estimated)
         self.wall_thick_source_combo = QComboBox()
         self.wall_thick_source_combo.addItem("Data", "data")
         self.wall_thick_source_combo.addItem("BOM", "bom")
@@ -774,11 +772,7 @@ class PartDialog(QDialog):
             if index >= 0:
                 self.wall_thick_source_combo.setCurrentIndex(index)
                 self._wall_thickness_source = self.part.wall_thickness_source
-                # Initialize checkbox to match source
-                self.wall_thick_source_check.setChecked(self._wall_thickness_source == "estimated")
         self.wall_thick_source_combo.currentIndexChanged.connect(self._on_wall_thick_source_changed)
-        # Link checkbox to combo
-        self.wall_thick_source_check.toggled.connect(self._on_wall_thick_estimated_toggled)
         phys_row3.addWidget(self.wall_thick_source_combo)
 
         self.btn_estimate_wall = QPushButton("Estimate (2.5mm)")
@@ -888,8 +882,21 @@ class PartDialog(QDialog):
             self.demand_peak_spin.setValue(0)
         demand_row1.addWidget(self.demand_peak_spin)
         demand_row1.addStretch()
-
         demand_layout.addLayout(demand_row1)
+
+        # Peak Year Demand
+        demand_row2 = QHBoxLayout()
+        demand_row2.addWidget(QLabel("Peak Year Demand (pcs)"))
+        self.demand_peak_spin_year = QSpinBox()
+        self.demand_peak_spin_year.setRange(0, 10000000)
+        if self.part and self.part.demand_peak:
+            self.demand_peak_spin_year.setValue(self.part.demand_peak)
+        else:
+            self.demand_peak_spin_year.setValue(0)
+        demand_row2.addWidget(self.demand_peak_spin_year)
+        demand_row2.addStretch()
+        demand_layout.addLayout(demand_row2)
+
         demand_group.setLayout(demand_layout)
         layout.addWidget(demand_group)
 
@@ -1073,9 +1080,30 @@ class PartDialog(QDialog):
         self._update_validation_status()
 
     def _on_material_changed(self):
-        """Handle material selection change."""
-        # This could be used to update density for calculations in future
-        pass
+        """Handle material selection change - enable tabs and recalculate if needed."""
+        # Enable/disable tabs based on material selection (for new parts)
+        self._check_material_and_enable_tabs()
+
+        # If volume and weight were calculated from density, recalculate with new material
+        if self._volume_origin == "from_weight":
+            self._on_calc_volume_from_weight()
+        elif self._weight_origin == "from_volume":
+            self._on_calc_weight_from_volume()
+
+    def _check_material_and_enable_tabs(self):
+        """Enable/disable tabs based on material selection (for new parts only)."""
+        # Only grey out tabs for NEW parts (not existing ones being edited)
+        if self.part:
+            return  # Existing part, don't grey out tabs
+
+        material_id = self.material_combo.currentData()
+        has_material = material_id is not None and material_id != ''
+
+        # Enable/disable all tabs except Basic Info (tab 0)
+        for tab_idx in [self.geometry_tab_index, self.manufacturing_tab_index, self.demand_tab_index, self.revisions_tab_index]:
+            tab_widget = self.tabs_widget.widget(tab_idx)
+            if tab_widget:
+                tab_widget.setEnabled(has_material)
 
     def _on_material_estimated_toggled(self):
         """Handle material estimated checkbox toggle."""
@@ -1463,23 +1491,14 @@ class PartDialog(QDialog):
         QMessageBox.information(self, "Estimated", "Wall thickness set to standard 2.5mm (marked as estimated)")
 
     def _on_wall_thick_source_changed(self):
-        """Handle wall thickness source change."""
+        """Handle wall thickness source change - source defined via dropdown only."""
         self._wall_thickness_source = self.wall_thick_source_combo.currentData()
-        # Update checkbox to reflect estimated status
-        self.wall_thick_source_check.setChecked(self._wall_thickness_source == "estimated")
-        self._update_wall_thickness_color()
+        self._update_validation_status()
 
     def _on_proj_area_source_changed(self):
         """Handle projected area source change."""
         self._projected_area_source = self.proj_area_source_combo.currentData()
-        self._update_proj_area_color()
-
-    def _on_wall_thick_estimated_toggled(self):
-        """Handle wall thickness estimated checkbox toggle."""
-        if self.wall_thick_source_check.isChecked():
-            self.wall_thick_source_combo.setCurrentIndex(self.wall_thick_source_combo.findData("estimated"))
-        else:
-            self.wall_thick_source_combo.setCurrentIndex(self.wall_thick_source_combo.findData("data"))
+        self._update_validation_status()
 
     def _update_wall_thickness_color(self):
         """Update wall thickness display color based on source (handled in properties panel)."""
@@ -1568,7 +1587,7 @@ class PartDialog(QDialog):
             return
 
         material_id = self.material_combo.currentData()
-        geometry_mode = "box" if self.radio_box.isChecked() else "direct"
+        geometry_mode = "box" if (hasattr(self, 'radio_proj_box') and self.radio_proj_box.isChecked()) else "direct"
 
         # Parse textbox values
         weight = self._get_float_value(self.weight_input)
@@ -1616,6 +1635,8 @@ class PartDialog(QDialog):
                     # Note: demand_sop and demand_eaop are now at RFQ level (project-level)
                     # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                     part.parts_over_runtime = self.demand_peak_spin.value() or None
+                    # demand_peak_spin_year holds peak year demand
+                    part.demand_peak = self.demand_peak_spin_year.value() or None
                     part.assembly = self.assembly_check.isChecked()
                     part.overmold = self.overmold_check.isChecked()
                     # V2.0: degate and eoat_type are now at tool level
@@ -1677,6 +1698,8 @@ class PartDialog(QDialog):
                         # Note: demand_sop and demand_eaop are now at RFQ level (project-level)
                         # demand_peak_spin now holds total demand (saved to parts_over_runtime)
                         parts_over_runtime=self.demand_peak_spin.value() or None,
+                        # demand_peak_spin_year holds peak year demand
+                        demand_peak=self.demand_peak_spin_year.value() or None,
                         assembly=self.assembly_check.isChecked(),
                         overmold=self.overmold_check.isChecked(),
                         # V2.0: degate and eoat_type are now at tool level
