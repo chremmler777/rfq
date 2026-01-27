@@ -1107,34 +1107,38 @@ class PartDialog(QDialog):
 
     def _update_validation_status(self):
         """Update properties panel with current part data and highlight missing fields."""
+        # Check if widgets exist (they might not during initialization)
+        if not hasattr(self, 'demand_peak_spin'):
+            return
+
         # Gather current values from textboxes and inputs
-        name = self.name_input.text().strip()
-        material_id = self.material_combo.currentData()
-        material_name = self.material_combo.currentText()
+        name = self.name_input.text().strip() if hasattr(self, 'name_input') else ''
+        material_id = self.material_combo.currentData() if hasattr(self, 'material_combo') else None
+        material_name = self.material_combo.currentText() if hasattr(self, 'material_combo') else ''
         demand = self.demand_peak_spin.value() if self.demand_peak_spin.value() > 0 else None
 
         # Parse textbox values
         try:
-            volume = float(self.volume_input.text().strip()) if self.volume_input.text().strip() else None
+            volume = float(self.volume_input.text().strip()) if hasattr(self, 'volume_input') and self.volume_input.text().strip() else None
         except ValueError:
             volume = None
 
         try:
-            weight = float(self.weight_input.text().strip()) if self.weight_input.text().strip() else None
+            weight = float(self.weight_input.text().strip()) if hasattr(self, 'weight_input') and self.weight_input.text().strip() else None
         except ValueError:
             weight = None
 
         try:
-            proj_area = float(self.proj_area_input.text().strip()) if self.proj_area_input.text().strip() else None
+            proj_area = float(self.proj_area_input.text().strip()) if hasattr(self, 'proj_area_input') and self.proj_area_input.text().strip() else None
         except ValueError:
             proj_area = None
 
         try:
-            wall_thick = float(self.wall_thick_input.text().strip()) if self.wall_thick_input.text().strip() else None
+            wall_thick = float(self.wall_thick_input.text().strip()) if hasattr(self, 'wall_thick_input') and self.wall_thick_input.text().strip() else None
         except ValueError:
             wall_thick = None
 
-        surface_finish = self.surface_finish_combo.currentText()
+        surface_finish = self.surface_finish_combo.currentText() if hasattr(self, 'surface_finish_combo') else ''
 
         # Create temp part for validation
         temp_part = Part(
@@ -1172,7 +1176,7 @@ class PartDialog(QDialog):
 
         # Material with estimated indicator
         material_missing = 'Material' in missing
-        material_source = 'estimated' if self.material_estimated_check.isChecked() else 'data'
+        material_source = 'estimated' if (hasattr(self, 'material_estimated_check') and self.material_estimated_check.isChecked()) else 'data'
         self.prop_labels['material'].setText(self._format_prop_with_source('Material', material_name if material_id else '-', material_source, material_missing))
         self.prop_labels['demand'].setText(self._format_prop('Total Demand', str(int(demand)) if demand else '-', 'Total Demand' in missing))
 
@@ -1205,9 +1209,9 @@ class PartDialog(QDialog):
 
         # Surface finish with estimated indicator and missing marker
         sf_text = surface_finish if surface_finish else '-'
-        sf_detail = self.surface_finish_detail_input.text().strip()
+        sf_detail = self.surface_finish_detail_input.text().strip() if hasattr(self, 'surface_finish_detail_input') else ''
         sf_detail_text = f"{sf_text} ({sf_detail})" if sf_detail else sf_text
-        sf_source = 'estimated' if self.surface_finish_estimated_check.isChecked() else 'data'
+        sf_source = 'estimated' if (hasattr(self, 'surface_finish_estimated_check') and self.surface_finish_estimated_check.isChecked()) else 'data'
         sf_missing = not surface_finish or surface_finish == ''
         self.prop_labels['surface_finish'].setText(self._format_prop_with_source('Surface Finish', sf_detail_text, sf_source, sf_missing))
 
