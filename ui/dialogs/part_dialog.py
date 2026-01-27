@@ -67,10 +67,12 @@ class ImageDropLabel(QLabel):
         """Handle Ctrl+V paste from clipboard."""
         from PyQt6.QtGui import QImage
         from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
         import tempfile
         import os
 
-        if event.keyCombination().toCombined() == (16777248 | 86):  # Ctrl+V (16777248 is Ctrl, 86 is V)
+        # Check for Ctrl+V (works better with modifier checking)
+        if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Get clipboard
             clipboard = QApplication.clipboard()
             mime_data = clipboard.mimeData()
@@ -692,6 +694,11 @@ class PartDialog(QDialog):
         # Validator: allow numbers only (projected area in cm²)
         proj_validator = QDoubleValidator(0.0, 1000000.0, 2)
         self.proj_area_input.setValidator(proj_validator)
+        # Load existing part's projected area (block signals to prevent firing handlers)
+        if self.part and self.part.projected_area_cm2:
+            self.proj_area_input.blockSignals(True)
+            self.proj_area_input.setText(f"{self.part.projected_area_cm2:.2f}")
+            self.proj_area_input.blockSignals(False)
         self.proj_area_input.textChanged.connect(self._on_proj_area_input_changed)
         proj_row.addWidget(self.proj_area_input)
 
@@ -718,14 +725,25 @@ class PartDialog(QDialog):
         self.proj_direct_frame.setLayout(proj_direct_layout)
         layout.addWidget(self.proj_direct_frame)
 
-        # Set initial mode
-        if self.part and self.part.geometry_mode == "box":
+        # Set initial mode (disconnect signals during init to prevent clearing values)
+        self.radio_proj_box.toggled.disconnect()
+        self.radio_proj_direct.toggled.disconnect()
+
+        is_box_mode = bool(self.part and self.part.geometry_mode == "box")
+        if is_box_mode:
             self.radio_proj_box.setChecked(True)
+            self._proj_area_origin = "from_box"
         else:
             self.radio_proj_direct.setChecked(True)
+            self._proj_area_origin = "manual"
 
-        # Apply initial visibility
-        self._on_proj_surface_mode_changed()
+        # Apply initial visibility (without clearing values during init)
+        self.proj_box_frame.setVisible(is_box_mode)
+        self.proj_direct_frame.setVisible(not is_box_mode)
+
+        # Reconnect signals
+        self.radio_proj_box.toggled.connect(self._on_proj_surface_mode_changed)
+        self.radio_proj_direct.toggled.connect(self._on_proj_surface_mode_changed)
 
         # Weight & Volume
         phys_frame = QGroupBox("Weight & Volume")
@@ -755,7 +773,11 @@ class PartDialog(QDialog):
         # Validator: allow numbers only (volume in cm³)
         vol_validator = QDoubleValidator(0.0, 1000000.0, 2)
         self.volume_input.setValidator(vol_validator)
-        # Do NOT prefill - user must enter manually
+        # Load existing part's volume (for editing, block signals to prevent handlers firing)
+        if self.part and self.part.volume_cm3:
+            self.volume_input.blockSignals(True)
+            self.volume_input.setText(f"{self.part.volume_cm3:.2f}")
+            self.volume_input.blockSignals(False)
         # Track when user edits (reset origin flag)
         self.volume_input.textChanged.connect(self._on_volume_input_changed)
         phys_row1.addWidget(self.volume_input)
@@ -780,7 +802,11 @@ class PartDialog(QDialog):
         # Validator: allow numbers only (weight in g)
         wt_validator = QDoubleValidator(0.0, 1000000.0, 2)
         self.weight_input.setValidator(wt_validator)
-        # Do NOT prefill - user must enter manually
+        # Load existing part's weight (for editing, block signals to prevent handlers firing)
+        if self.part and self.part.weight_g:
+            self.weight_input.blockSignals(True)
+            self.weight_input.setText(f"{self.part.weight_g:.2f}")
+            self.weight_input.blockSignals(False)
         # Track when user edits (reset origin flag)
         self.weight_input.textChanged.connect(self._on_weight_input_changed)
         phys_row2.addWidget(self.weight_input)
@@ -812,7 +838,11 @@ class PartDialog(QDialog):
         # Validator: allow numbers only (wall thickness in mm)
         wt_thick_validator = QDoubleValidator(0.0, 100.0, 2)
         self.wall_thick_input.setValidator(wt_thick_validator)
-        # Do NOT prefill - user must enter manually
+        # Load existing part's wall thickness (for editing, block signals to prevent handlers firing)
+        if self.part and self.part.wall_thickness_mm:
+            self.wall_thick_input.blockSignals(True)
+            self.wall_thick_input.setText(f"{self.part.wall_thickness_mm:.2f}")
+            self.wall_thick_input.blockSignals(False)
         phys_row3.addWidget(self.wall_thick_input)
 
         # Wall thickness source dropdown (replaces checkbox - Data, BOM, or Estimated)
