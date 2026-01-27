@@ -63,6 +63,35 @@ class ImageDropLabel(QLabel):
             self.image_clicked()
         super().mousePressEvent(event)
 
+    def keyPressEvent(self, event):
+        """Handle Ctrl+V paste from clipboard."""
+        from PyQt6.QtGui import QImage
+        from PyQt6.QtWidgets import QApplication
+        import tempfile
+        import os
+
+        if event.keyCombination().toCombined() == (16777248 | 86):  # Ctrl+V (16777248 is Ctrl, 86 is V)
+            # Get clipboard
+            clipboard = QApplication.clipboard()
+            mime_data = clipboard.mimeData()
+
+            # Check if clipboard has image data
+            if mime_data.hasImage():
+                image = mime_data.imageData()
+                if isinstance(image, QImage):
+                    # Save image to temp file
+                    try:
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                        temp_file.close()
+                        image.save(temp_file.name, 'PNG')
+                        if self.image_dropped:
+                            self.image_dropped(temp_file.name)
+                    except Exception as e:
+                        print(f"Error pasting image: {e}")
+                    return
+
+        super().keyPressEvent(event)
+
 
 class PartDialog(QDialog):
     """Dialog for creating/editing parts (BOM entries)."""
@@ -187,8 +216,12 @@ class PartDialog(QDialog):
         # Initial properties update
         self._update_validation_status()
 
-        # For new parts, grey out tabs until material is selected
-        self._check_material_and_enable_tabs()
+        # For new parts, grey out tabs until basic info is complete
+        self._check_basic_info_complete_and_enable_tabs()
+
+        # Connect basic info signals to check completion
+        self.name_input.textChanged.connect(self._check_basic_info_complete_and_enable_tabs)
+        self.surface_finish_combo.currentIndexChanged.connect(self._check_basic_info_complete_and_enable_tabs)
 
     def _connect_properties_signals(self):
         """Connect all input signals to properties panel update."""
@@ -550,6 +583,8 @@ class PartDialog(QDialog):
         self.image_label.setMinimumHeight(120)
         self.image_label.setMaximumHeight(120)
         self.image_label.setStyleSheet("border: 1px solid #ccc;")
+        # Allow focus for keyboard paste events
+        self.image_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.image_label.image_dropped = self._process_dropped_image
         self.image_label.image_clicked = self._on_image_clicked
         if self.image_data:
@@ -558,7 +593,7 @@ class PartDialog(QDialog):
             self.image_label.setPixmap(pixmap.scaledToHeight(80, Qt.TransformationMode.SmoothTransformation))
             self.image_label.setText("")
         else:
-            self.image_label.setText("Drag-drop or Upload")
+            self.image_label.setText("Drag-drop, Upload, or Paste (Ctrl+V)")
             self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.image_label)
 
@@ -619,10 +654,14 @@ class PartDialog(QDialog):
         proj_box_layout = QVBoxLayout()
 
         # Effective % input with calculate button
+        from PyQt6.QtGui import QDoubleValidator
         eff_row = QHBoxLayout()
         eff_row.addWidget(QLabel("Effective Surface %"))
         self.box_effective_input = QLineEdit()
         self.box_effective_input.setPlaceholderText("100")
+        # Validator: allow numbers only (0-100%)
+        eff_validator = QDoubleValidator(0.0, 100.0, 2)
+        self.box_effective_input.setValidator(eff_validator)
         eff_row.addWidget(self.box_effective_input)
         eff_row.addWidget(QLabel("%"))
 
@@ -648,6 +687,9 @@ class PartDialog(QDialog):
 
         self.proj_area_input = QLineEdit()
         self.proj_area_input.setPlaceholderText("Enter value (e.g., 100.5)")
+        # Validator: allow numbers only (projected area in cm²)
+        proj_validator = QDoubleValidator(0.0, 1000000.0, 2)
+        self.proj_area_input.setValidator(proj_validator)
         self.proj_area_input.textChanged.connect(self._on_proj_area_input_changed)
         proj_row.addWidget(self.proj_area_input)
 
@@ -708,6 +750,9 @@ class PartDialog(QDialog):
 
         self.volume_input = QLineEdit()
         self.volume_input.setPlaceholderText("Enter value (e.g., 50.5)")
+        # Validator: allow numbers only (volume in cm³)
+        vol_validator = QDoubleValidator(0.0, 1000000.0, 2)
+        self.volume_input.setValidator(vol_validator)
         # Do NOT prefill - user must enter manually
         # Track when user edits (reset origin flag)
         self.volume_input.textChanged.connect(self._on_volume_input_changed)
@@ -730,6 +775,9 @@ class PartDialog(QDialog):
 
         self.weight_input = QLineEdit()
         self.weight_input.setPlaceholderText("Enter value (e.g., 125.5)")
+        # Validator: allow numbers only (weight in g)
+        wt_validator = QDoubleValidator(0.0, 1000000.0, 2)
+        self.weight_input.setValidator(wt_validator)
         # Do NOT prefill - user must enter manually
         # Track when user edits (reset origin flag)
         self.weight_input.textChanged.connect(self._on_weight_input_changed)
@@ -759,6 +807,9 @@ class PartDialog(QDialog):
 
         self.wall_thick_input = QLineEdit()
         self.wall_thick_input.setPlaceholderText("e.g., 2.5")
+        # Validator: allow numbers only (wall thickness in mm)
+        wt_thick_validator = QDoubleValidator(0.0, 100.0, 2)
+        self.wall_thick_input.setValidator(wt_thick_validator)
         # Do NOT prefill - user must enter manually
         phys_row3.addWidget(self.wall_thick_input)
 
@@ -1010,11 +1061,16 @@ class PartDialog(QDialog):
         return tab
 
     def _create_dimension_input(self, layout: QVBoxLayout, label: str, min_val: float, max_val: float, initial_val=None) -> QLineEdit:
-        """Create a dimension input textbox with label and add to layout."""
+        """Create a dimension input textbox with label and add to layout. Numbers only."""
+        from PyQt6.QtGui import QDoubleValidator
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
         textbox = QLineEdit()
         textbox.setPlaceholderText(f"Enter value ({min_val}-{max_val})")
+        # Add validator: allow only numbers (decimals)
+        validator = QDoubleValidator(min_val, max_val, 2)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+        textbox.setValidator(validator)
         # Do NOT prefill - user must enter manually
         row.addWidget(textbox)
         layout.addLayout(row)
@@ -1081,8 +1137,8 @@ class PartDialog(QDialog):
 
     def _on_material_changed(self):
         """Handle material selection change - enable tabs and recalculate if needed."""
-        # Enable/disable tabs based on material selection (for new parts)
-        self._check_material_and_enable_tabs()
+        # Enable/disable tabs based on basic info completion
+        self._check_basic_info_complete_and_enable_tabs()
 
         # If volume and weight were calculated from density, recalculate with new material
         if self._volume_origin == "from_weight":
@@ -1090,20 +1146,26 @@ class PartDialog(QDialog):
         elif self._weight_origin == "from_volume":
             self._on_calc_weight_from_volume()
 
-    def _check_material_and_enable_tabs(self):
-        """Enable/disable tabs based on material selection (for new parts only)."""
+    def _check_basic_info_complete_and_enable_tabs(self):
+        """Enable/disable tabs based on basic info completion (for new parts only)."""
         # Only grey out tabs for NEW parts (not existing ones being edited)
         if self.part:
             return  # Existing part, don't grey out tabs
 
-        material_id = self.material_combo.currentData()
-        has_material = material_id is not None and material_id != ''
+        # Check if basic info is complete
+        name = self.name_input.text().strip() if hasattr(self, 'name_input') else ''
+        material_id = self.material_combo.currentData() if hasattr(self, 'material_combo') else None
+        surface_finish = self.surface_finish_combo.currentData() if hasattr(self, 'surface_finish_combo') else None
+
+        # All three required: name, material, surface finish
+        is_complete = (name and material_id is not None and material_id != '' and
+                      surface_finish is not None and surface_finish != '')
 
         # Enable/disable all tabs except Basic Info (tab 0)
         for tab_idx in [self.geometry_tab_index, self.manufacturing_tab_index, self.demand_tab_index, self.revisions_tab_index]:
             tab_widget = self.tabs_widget.widget(tab_idx)
             if tab_widget:
-                tab_widget.setEnabled(has_material)
+                tab_widget.setEnabled(is_complete)
 
     def _on_material_estimated_toggled(self):
         """Handle material estimated checkbox toggle."""
