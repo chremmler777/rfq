@@ -8,6 +8,7 @@ from database.models import Part
 # Color constants - using vibrant, high-contrast colors
 COLOR_ESTIMATED_BG = QColor("#FFD54F")  # Vibrant yellow (Material Design Amber 300)
 COLOR_BOM_BG = QColor("#64B5F6")  # Vibrant blue (Material Design Light Blue 300)
+COLOR_CALCULATED_BG = QColor("#B0BEC5")  # Grey (Material Design Blue Grey 200)
 COLOR_MISSING_TEXT = QColor("#FF5050")  # Red text
 COLOR_MISSING_ROW_BG = QColor("#FFE0E0")  # Light red background
 COLOR_COMPLETE_BG = QColor("#E6F4E6")  # Light green
@@ -17,7 +18,7 @@ def get_source_color(source: str) -> QColor:
     """Get background color for a data source.
 
     Args:
-        source: One of "data", "bom", "estimated", or other (returns white)
+        source: One of "data", "bom", "estimated", "calculated", or other (returns white)
 
     Returns:
         QColor for the background
@@ -27,6 +28,8 @@ def get_source_color(source: str) -> QColor:
         return COLOR_ESTIMATED_BG
     elif source_lower == "bom":
         return COLOR_BOM_BG
+    elif source_lower == "calculated":
+        return COLOR_CALCULATED_BG
     else:
         return QColor("white")
 
@@ -36,7 +39,7 @@ def apply_source_color_to_widget(widget, source: str):
 
     Args:
         widget: The widget to colorize
-        source: One of "data", "bom", "estimated"
+        source: One of "data", "bom", "estimated", "calculated"
     """
     color = get_source_color(source)
 
