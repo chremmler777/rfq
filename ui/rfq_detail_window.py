@@ -423,8 +423,8 @@ class RFQDetailWindow(QMainWindow):
         self.parts_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.parts_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.parts_tree.setUniformRowHeights(False)  # Allow variable row heights for process steps
-        # Increase row height for better image visibility
-        self.parts_tree.header().setDefaultSectionSize(50)
+        # Increase row height for better image visibility via stylesheet
+        self.parts_tree.setStyleSheet("QTreeWidget::item { height: 50px; }")
         self.parts_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.parts_tree.customContextMenuRequested.connect(self._on_parts_context_menu)
         self.parts_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
@@ -473,7 +473,8 @@ class RFQDetailWindow(QMainWindow):
         self.assembly_tree.setColumnWidth(7, 80)
         self.assembly_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assembly_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.assembly_tree.header().setDefaultSectionSize(50)  # Increase row height for image visibility
+        # Increase row height for image visibility via stylesheet
+        self.assembly_tree.setStyleSheet("QTreeWidget::item { height: 50px; }")
         self.assembly_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.assembly_tree.customContextMenuRequested.connect(self._on_assembly_tree_context_menu)
         self.assembly_tree.doubleClicked.connect(self._on_assembly_tree_double_clicked)
@@ -1093,11 +1094,27 @@ class RFQDetailWindow(QMainWindow):
             if not rfq:
                 return
 
-            # Get all parts except assemblies
-            parts = [p for p in rfq.parts if p.part_type != "assembly"]
+            # Get all IM parts
+            im_parts = [p for p in rfq.parts if p.part_type == "injection_molded"]
+
+            # Collect purchased and takeover components (group by name)
+            purchased_components = {}  # {component_name: total_qty}
+            all_components = session.query(AssemblyComponent).filter(
+                AssemblyComponent.component_type.in_(["purchased", "takeover"])
+            ).all()
+            for comp in all_components:
+                assembly = session.query(Part).get(comp.assembly_id)
+                if assembly:
+                    asm_qty = assembly.demand_peak or 1
+                    comp_name = comp.component_name or f"{comp.component_type}_{comp.id}"
+                    if comp_name not in purchased_components:
+                        purchased_components[comp_name] = 0
+                    purchased_components[comp_name] += asm_qty * comp.quantity
 
             row_idx = 0
-            for part in parts:
+
+            # Add IM parts
+            for part in im_parts:
                 self.parts_summary_table.insertRow(row_idx)
 
                 # Calculate total quantity across all assemblies
@@ -1124,8 +1141,26 @@ class RFQDetailWindow(QMainWindow):
                 self.parts_summary_table.setItem(row_idx, 1, QTableWidgetItem(part.part_number or "-"))
 
                 # Type
-                type_text = "IM" if part.part_type == "injection_molded" else part.part_type.title()
-                self.parts_summary_table.setItem(row_idx, 2, QTableWidgetItem(type_text))
+                self.parts_summary_table.setItem(row_idx, 2, QTableWidgetItem("IM"))
+
+                # Total Quantity
+                self.parts_summary_table.setItem(row_idx, 3, QTableWidgetItem(str(total_qty)))
+
+                row_idx += 1
+
+            # Add purchased/takeover components
+            for comp_name, total_qty in sorted(purchased_components.items()):
+                self.parts_summary_table.insertRow(row_idx)
+
+                # Name
+                self.parts_summary_table.setItem(row_idx, 0, QTableWidgetItem(comp_name))
+
+                # Part# (not applicable for purchased)
+                self.parts_summary_table.setItem(row_idx, 1, QTableWidgetItem("-"))
+
+                # Type (Purchased or Takeover)
+                type_item = QTableWidgetItem("Purchased")
+                self.parts_summary_table.setItem(row_idx, 2, type_item)
 
                 # Total Quantity
                 self.parts_summary_table.setItem(row_idx, 3, QTableWidgetItem(str(total_qty)))
