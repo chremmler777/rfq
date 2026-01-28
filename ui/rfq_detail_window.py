@@ -2409,7 +2409,6 @@ class RFQDetailWindow(QMainWindow):
 
         # Separator row
         sep_item = QTreeWidgetItem()
-        sep_item.setFirstColumnSpanned(True)
         sep_item.setText(0, "── Process Steps ──")
         font = sep_item.font(0)
         font.setItalic(True)
@@ -2419,11 +2418,12 @@ class RFQDetailWindow(QMainWindow):
             sep_item.setBackground(col, QColor("#4a4a4a"))
         sep_item.setFlags(sep_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         asm_item.addChild(sep_item)
+        # Must be called AFTER item is in the tree
+        sep_item.setFirstColumnSpanned(True)
 
         # Each step — use native tree text + background (spans full width)
         for step in steps:
             step_item = QTreeWidgetItem()
-            step_item.setFirstColumnSpanned(True)
 
             # Format: "1. Assemble: Part1 x1, Part2 x2"
             process_label = step.process_type.replace("_", " ").title()
@@ -2462,6 +2462,8 @@ class RFQDetailWindow(QMainWindow):
             step_item.setData(0, Qt.ItemDataRole.UserRole + 1, "process_step")
 
             asm_item.addChild(step_item)
+            # Must be called AFTER item is in the tree
+            step_item.setFirstColumnSpanned(True)
 
     def _on_move_component(self, component_id: int):
         """Show dialog to move component to another assembly."""
