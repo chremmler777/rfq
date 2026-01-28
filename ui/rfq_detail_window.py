@@ -858,10 +858,9 @@ class RFQDetailWindow(QMainWindow):
                                     child_item = QTreeWidgetItem(asm_item)
                                 self._style_component_item(child_item, comp, session)
 
-                    # Add process steps after assembly (at root level)
-                    self._add_process_steps_to_tree(self.parts_tree, asm_item, part, session)
-
                     self.parts_tree.addTopLevelItem(asm_item)
+                    # Process steps MUST be added after asm_item is in the tree
+                    self._add_process_steps_to_tree(self.parts_tree, asm_item, part, session)
 
                 elif part.id not in assembly_part_ids:
                     # Only show as standalone if NOT used in any assembly
@@ -1150,10 +1149,9 @@ class RFQDetailWindow(QMainWindow):
                                 child_item = QTreeWidgetItem(asm_item)
                             self._style_component_item(child_item, comp, session)
 
-                # Add process steps after assembly (at root level)
-                self._add_process_steps_to_tree(self.assembly_tree, asm_item, part, session)
-
                 self.assembly_tree.addTopLevelItem(asm_item)
+                # Process steps MUST be added after asm_item is in the tree
+                self._add_process_steps_to_tree(self.assembly_tree, asm_item, part, session)
 
     def _format_cavities_display(self, tool: Tool) -> str:
         """Format cavities display as 'cav1/cav2/...' and check for imbalance."""
