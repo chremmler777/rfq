@@ -423,6 +423,9 @@ class RFQDetailWindow(QMainWindow):
         self.parts_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.parts_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.parts_tree.setUniformRowHeights(False)  # Allow variable row heights for process steps
+        self.parts_tree.setDefaultItemShowExpandButton(True)
+        # Increase row height for better image visibility
+        self.parts_tree.header().setDefaultSectionSize(50)
         self.parts_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.parts_tree.customContextMenuRequested.connect(self._on_parts_context_menu)
         self.parts_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
@@ -455,16 +458,6 @@ class RFQDetailWindow(QMainWindow):
         asm_tab = QWidget()
         asm_layout = QVBoxLayout(asm_tab)
 
-        # Process steps display (above tree, full width)
-        self.process_steps_display = QPlainTextEdit()
-        self.process_steps_display.setReadOnly(True)
-        self.process_steps_display.setPlaceholderText("Select an assembly to view its process steps")
-        self.process_steps_display.setMaximumHeight(140)
-        self.process_steps_display.setMinimumHeight(50)
-        self.process_steps_display.setStyleSheet("background-color: #90C890; border: 1px solid #666; padding: 8px; font-family: monospace; font-size: 10pt; color: #333;")
-        asm_layout.addWidget(QLabel("Process Steps:"), 0)
-        asm_layout.addWidget(self.process_steps_display)
-
         self.assembly_tree = DroppableAssemblyLinesTree()
         self.assembly_tree.set_rfq_window(self)
         self.assembly_tree.setColumnCount(8)
@@ -481,14 +474,13 @@ class RFQDetailWindow(QMainWindow):
         self.assembly_tree.setColumnWidth(7, 80)
         self.assembly_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assembly_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.assembly_tree.header().setDefaultSectionSize(50)  # Increase row height for image visibility
         self.assembly_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.assembly_tree.customContextMenuRequested.connect(self._on_assembly_tree_context_menu)
         self.assembly_tree.doubleClicked.connect(self._on_assembly_tree_double_clicked)
         self.assembly_tree.clicked.connect(self._on_assembly_tree_clicked)
         self.assembly_tree.expanded.connect(self._on_item_manually_expanded)
         self.assembly_tree.collapsed.connect(self._on_item_manually_collapsed)
-        # Connect to selection changes to update process steps display
-        self.assembly_tree.itemSelectionChanged.connect(self._on_assembly_tree_selection_changed_direct)
         self.asm_no_data_label = QLabel("No assemblies defined. Create assemblies in the Master BOM tab.")
         self.asm_no_data_label.setStyleSheet("font-size: 11pt; color: #888; padding: 20px;")
         self.asm_no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -496,6 +488,24 @@ class RFQDetailWindow(QMainWindow):
         asm_layout.addWidget(self.asm_no_data_label)
         asm_layout.addWidget(self.assembly_tree)
         self.bom_sub_tabs.addTab(asm_tab, "Assembly Lines")
+
+        # Tab 4: Parts Summary (total quantities across assemblies)
+        summary_tab = QWidget()
+        summary_layout = QVBoxLayout(summary_tab)
+        self.parts_summary_table = QTableWidget()
+        self.parts_summary_table.setColumnCount(4)
+        self.parts_summary_table.setHorizontalHeaderLabels([
+            "Name", "Part#", "Type", "Total Quantity"
+        ])
+        self.parts_summary_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.parts_summary_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.parts_summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.parts_summary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.parts_summary_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.parts_summary_table.customContextMenuRequested.connect(self._on_im_parts_context_menu)
+        self.parts_summary_table.doubleClicked.connect(self._on_im_parts_double_clicked)
+        summary_layout.addWidget(self.parts_summary_table)
+        self.bom_sub_tabs.addTab(summary_tab, "Parts Summary")
 
         layout.addWidget(self.bom_sub_tabs)
         return tab
@@ -578,6 +588,7 @@ class RFQDetailWindow(QMainWindow):
             self._restore_tree_expanded_state(self.parts_tree, expanded_state)
 
         self._load_im_parts_table()
+        self._load_parts_summary_table()
 
         # Save and restore Assembly Lines tree state (also respects auto-expand mode)
         expanded_state_asm = None
@@ -992,7 +1003,7 @@ class RFQDetailWindow(QMainWindow):
 
     def _load_im_parts_table(self):
         """Load flat list of all IM parts for tooling engineer view."""
-        from ui.color_coding import get_missing_fields
+        from ui.color_coding import get_missing_fields, apply_source_color_to_table_item
 
         self.im_parts_table.setRowCount(0)
 
@@ -1042,15 +1053,19 @@ class RFQDetailWindow(QMainWindow):
                     f"{part.volume_cm3:.2f}" if part.volume_cm3 else "-"
                 ))
 
-                # Proj.Area (cm²)
-                self.im_parts_table.setItem(row_idx, 5, QTableWidgetItem(
+                # Proj.Area (cm²) - with color coding for source
+                proj_item = QTableWidgetItem(
                     f"{part.projected_area_cm2:.2f}" if part.projected_area_cm2 else "-"
-                ))
+                )
+                apply_source_color_to_table_item(proj_item, part.projected_area_source)
+                self.im_parts_table.setItem(row_idx, 5, proj_item)
 
-                # Wall Thickness (mm)
-                self.im_parts_table.setItem(row_idx, 6, QTableWidgetItem(
+                # Wall Thickness (mm) - with color coding for source
+                wall_item = QTableWidgetItem(
                     f"{part.wall_thickness_mm:.2f}" if part.wall_thickness_mm else "-"
-                ))
+                )
+                apply_source_color_to_table_item(wall_item, part.wall_thickness_source)
+                self.im_parts_table.setItem(row_idx, 6, wall_item)
 
                 # Peak Demand
                 self.im_parts_table.setItem(row_idx, 7, QTableWidgetItem(
@@ -1069,6 +1084,54 @@ class RFQDetailWindow(QMainWindow):
                     status_item = QTableWidgetItem("\u26a0 Incomplete")
                     status_item.setForeground(QColor("#FF5050"))
                 self.im_parts_table.setItem(row_idx, 9, status_item)
+
+    def _load_parts_summary_table(self):
+        """Load summary of all parts (excluding assemblies) with total quantities."""
+        self.parts_summary_table.setRowCount(0)
+
+        with session_scope() as session:
+            rfq = session.query(RFQ).get(self.rfq_id)
+            if not rfq:
+                return
+
+            # Get all parts except assemblies
+            parts = [p for p in rfq.parts if p.part_type != "assembly"]
+
+            row_idx = 0
+            for part in parts:
+                self.parts_summary_table.insertRow(row_idx)
+
+                # Calculate total quantity across all assemblies
+                total_qty = 0
+                components = session.query(AssemblyComponent).filter(
+                    AssemblyComponent.component_part_id == part.id
+                ).all()
+                for comp in components:
+                    assembly = session.query(Part).get(comp.assembly_id)
+                    if assembly:
+                        asm_qty = assembly.demand_peak or 1
+                        total_qty += asm_qty * comp.quantity
+
+                # If not used in assemblies, show the part's own demand
+                if total_qty == 0:
+                    total_qty = part.demand_peak or 0
+
+                # Name
+                name_item = QTableWidgetItem(part.name)
+                name_item.setData(Qt.ItemDataRole.UserRole, part.id)
+                self.parts_summary_table.setItem(row_idx, 0, name_item)
+
+                # Part#
+                self.parts_summary_table.setItem(row_idx, 1, QTableWidgetItem(part.part_number or "-"))
+
+                # Type
+                type_text = "IM" if part.part_type == "injection_molded" else part.part_type.title()
+                self.parts_summary_table.setItem(row_idx, 2, QTableWidgetItem(type_text))
+
+                # Total Quantity
+                self.parts_summary_table.setItem(row_idx, 3, QTableWidgetItem(str(total_qty)))
+
+                row_idx += 1
 
     def _load_assembly_tree(self):
         """Load assembly-only tree view for manufacturing engineer."""
