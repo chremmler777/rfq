@@ -59,11 +59,32 @@ def upgrade_schema():
     # Define the schema upgrades: column_name -> (sql_type, default_value)
     schema_upgrades = {
         'parts': [
+            ('part_type', "VARCHAR(20) DEFAULT 'injection_molded'"),
             ('surface_finish', 'VARCHAR(30)'),
             ('surface_finish_detail', 'VARCHAR(200)'),
             ('surface_finish_estimated', 'BOOLEAN DEFAULT 0'),
             ('projected_area_source', "VARCHAR(20) DEFAULT 'data'"),
             ('wall_thickness_needs_improvement', 'BOOLEAN DEFAULT 0'),
+        ],
+        'assembly_components': [
+            ('component_type', "VARCHAR(20)"),
+            ('quantity', 'INTEGER DEFAULT 1'),
+            ('position', 'REAL'),
+            ('component_part_id', 'INTEGER'),
+            ('component_name', 'VARCHAR(200)'),
+            ('component_material', 'VARCHAR(100)'),
+            ('join_method', "VARCHAR(20) DEFAULT 'none'"),
+            ('join_quantity', 'INTEGER DEFAULT 0'),
+            ('join_detail', 'VARCHAR(500)'),
+            ('notes', 'TEXT'),
+        ],
+        'assembly_process_steps': [
+            ('assembly_id', 'INTEGER'),
+            ('step_number', 'INTEGER'),
+            ('description', 'VARCHAR(500)'),
+            ('process_type', 'VARCHAR(20)'),
+            ('notes', 'TEXT'),
+            ('components_json', 'TEXT'),
         ]
     }
 
@@ -90,6 +111,13 @@ def upgrade_schema():
             conn.commit()
         except Exception as e:
             print(f"Migration note for wall_thickness_source migration: {str(e)}")
+
+        # Migrate existing assembly=1 to part_type='assembly'
+        try:
+            conn.execute(text("UPDATE parts SET part_type = 'assembly' WHERE assembly = 1"))
+            conn.commit()
+        except Exception as e:
+            print(f"Migration note for assembly to part_type migration: {str(e)}")
 
 
 def init_db():

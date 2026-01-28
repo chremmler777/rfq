@@ -254,6 +254,9 @@ class Part(Base):
     demand_peak: Mapped[Optional[int]] = mapped_column(Integer)  # Peak annual demand (part-specific)
     parts_over_runtime: Mapped[Optional[int]] = mapped_column(Integer)  # Total lifetime volume (part-specific)
 
+    # Part type
+    part_type: Mapped[str] = mapped_column(String(20), default="injection_molded")  # "injection_molded" or "assembly"
+
     # Manufacturing options
     assembly: Mapped[bool] = mapped_column(Boolean, default=False)
     degate: Mapped[str] = mapped_column(String(10), default=DegateOption.NO.value)
