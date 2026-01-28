@@ -858,6 +858,9 @@ class RFQDetailWindow(QMainWindow):
                                     child_item = QTreeWidgetItem(asm_item)
                                 self._style_component_item(child_item, comp, session)
 
+                    # Add process steps after assembly (at root level)
+                    self._add_process_steps_to_tree(self.parts_tree, asm_item, part, session)
+
                     self.parts_tree.addTopLevelItem(asm_item)
 
                 elif part.id not in assembly_part_ids:
@@ -1146,6 +1149,9 @@ class RFQDetailWindow(QMainWindow):
                             else:
                                 child_item = QTreeWidgetItem(asm_item)
                             self._style_component_item(child_item, comp, session)
+
+                # Add process steps after assembly (at root level)
+                self._add_process_steps_to_tree(self.assembly_tree, asm_item, part, session)
 
                 self.assembly_tree.addTopLevelItem(asm_item)
 
@@ -2391,6 +2397,89 @@ class RFQDetailWindow(QMainWindow):
             self._update_process_steps_display(item_id)
         else:
             self.process_steps_display.setPlainText("")
+
+    def _add_process_steps_to_tree(self, tree, asm_item: QTreeWidgetItem, part, session):
+        """Add process steps as children of assembly (so they collapse/expand together)."""
+        steps = session.query(AssemblyProcessStep).filter(
+            AssemblyProcessStep.assembly_id == part.id
+        ).order_by(AssemblyProcessStep.step_number).all()
+
+        if not steps:
+            return
+
+        # Separator row (child of assembly, full width)
+        sep_item = QTreeWidgetItem()
+        sep_item.setText(0, "│ ── Process Steps ──")
+        font = sep_item.font(0)
+        font.setItalic(True)
+        sep_item.setFont(0, font)
+        sep_item.setForeground(0, QColor("#808080"))
+        sep_item.setBackground(0, QColor("#4a4a4a"))
+        sep_item.setFlags(sep_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        # Make separator span all columns too
+        sep_item.setFirstColumnSpanned(True)
+        asm_item.addChild(sep_item)
+
+        # Each step (child of assembly, renders as full-width custom label)
+        for step in steps:
+            step_item = QTreeWidgetItem()
+
+            # Format: "1. │ Assemble: Part1 x1, Part2 x2"
+            process_label = step.process_type.replace("_", " ").title()
+            comp_parts = []
+            components_dict = step.get_components()
+            if components_dict:
+                for comp_id_str, qty in components_dict.items():
+                    try:
+                        comp_id = int(comp_id_str)
+                        comp = session.query(AssemblyComponent).get(comp_id)
+                        if comp:
+                            comp_name = self._format_component_name_short(comp)
+                            comp_parts.append(f"{comp_name} x{qty}")
+                    except:
+                        pass
+
+            # Build full text with line wrapping for long component lists
+            comp_text = ", ".join(comp_parts) if comp_parts else ""
+            step_header = f"{step.step_number}. │ {process_label}:"
+
+            # If components list is long, break into multiple lines
+            if len(comp_text) > 80:
+                lines = [step_header]
+                current_line = "    "
+                for comp in comp_parts:
+                    if len(current_line) + len(comp) + 2 > 110:
+                        lines.append(current_line.rstrip(", "))
+                        current_line = "      "
+                    current_line += comp + ", "
+                if current_line.strip():
+                    lines.append(current_line.rstrip(", "))
+                step_text = "\n".join(lines)
+            else:
+                step_text = f"{step_header} {comp_text}"
+
+            # Create full-width label widget (bypasses column layout)
+            label = QLabel(step_text)
+            label.setStyleSheet("background-color: #90C890; padding: 5px; margin: 0px; border: none;")
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            if step.notes:
+                label.setToolTip(step.notes)
+
+            # Calculate height based on wrapped text
+            num_lines = step_text.count("\n") + 1
+            height = 20 + (num_lines - 1) * 18
+
+            step_item.setData(0, Qt.ItemDataRole.UserRole, step.id)
+            step_item.setData(0, Qt.ItemDataRole.UserRole + 1, "process_step")
+            # Make item span all columns for full width
+            step_item.setFirstColumnSpanned(True)
+            step_item.setSizeHint(0, QSize(tree.width() - 20, height))
+
+            # Add as child of assembly (collapses/expands with it)
+            asm_item.addChild(step_item)
+            # Use custom widget for full-width rendering
+            tree.setItemWidget(step_item, 0, label)
 
     def _on_move_component(self, component_id: int):
         """Show dialog to move component to another assembly."""
