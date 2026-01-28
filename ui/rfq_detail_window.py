@@ -423,7 +423,6 @@ class RFQDetailWindow(QMainWindow):
         self.parts_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.parts_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.parts_tree.setUniformRowHeights(False)  # Allow variable row heights for process steps
-        self.parts_tree.setDefaultItemShowExpandButton(True)
         # Increase row height for better image visibility
         self.parts_tree.header().setDefaultSectionSize(50)
         self.parts_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
