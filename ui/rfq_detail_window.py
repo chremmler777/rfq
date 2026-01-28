@@ -464,8 +464,6 @@ class RFQDetailWindow(QMainWindow):
         self.process_steps_display.setStyleSheet("background-color: #90C890; border: 1px solid #666; padding: 8px; font-family: monospace; font-size: 10pt; color: #333;")
         asm_layout.addWidget(QLabel("Process Steps:"), 0)
         asm_layout.addWidget(self.process_steps_display)
-        # Connect selection model to update on any selection change
-        self.assembly_tree.selectionModel().selectionChanged.connect(self._on_assembly_tree_selection_changed)
 
         self.assembly_tree = DroppableAssemblyLinesTree()
         self.assembly_tree.set_rfq_window(self)
