@@ -68,6 +68,35 @@ class NozzleType(enum.Enum):
     COLD_RUNNER = "cold_runner"
 
 
+class JoinMethod(enum.Enum):
+    """Component assembly join methods."""
+    NONE = "none"
+    CLIP = "clip"
+    SCREW = "screw"
+    WELD = "weld"
+    ADHESIVE = "adhesive"
+    PRESS_FIT = "press_fit"
+    SNAP_FIT = "snap_fit"
+
+
+class ProcessStepType(enum.Enum):
+    """Manufacturing process step types."""
+    ASSEMBLE = "assemble"
+    INSERT = "insert"
+    WELD = "weld"
+    CLIP = "clip"
+    SCREW = "screw"
+    PRESS_FIT = "press_fit"
+    SNAP_FIT = "snap_fit"
+    GREASE = "grease"
+    ADHESIVE = "adhesive"
+    TEST = "test"
+    INSPECT = "inspect"
+    LABEL = "label"
+    PACK = "pack"
+    OTHER = "other"
+
+
 # Legacy junction table for family tools (kept for backwards compatibility)
 # New code should use ToolPartConfiguration for more detailed tool-part relationships
 tool_parts = Table(
@@ -252,6 +281,12 @@ class Part(Base):
     )
     revisions: Mapped[List["PartRevision"]] = relationship("PartRevision", back_populates="part", cascade="all, delete-orphan")
     sub_boms: Mapped[List["SubBOM"]] = relationship("SubBOM", back_populates="part", cascade="all, delete-orphan")
+    assembly_components: Mapped[List["AssemblyComponent"]] = relationship(
+        "AssemblyComponent", foreign_keys="AssemblyComponent.assembly_id", cascade="all, delete-orphan"
+    )
+    process_steps: Mapped[List["AssemblyProcessStep"]] = relationship(
+        "AssemblyProcessStep", foreign_keys="AssemblyProcessStep.assembly_id", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Part(id={self.id}, name='{self.name}', part_number='{self.part_number}')>"
@@ -566,6 +601,66 @@ class ExistingTool(Base):
     def set_tags_list(self, tags: List[str]):
         """Set tags from a list."""
         self.tags = ', '.join(tags) if tags else None
+
+
+class AssemblyComponent(Base):
+    """Component within an assembly."""
+    __tablename__ = 'assembly_components'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assembly_id: Mapped[int] = mapped_column(ForeignKey('parts.id'))
+    component_type: Mapped[str] = mapped_column(String(20))  # injection_molded, purchased, takeover
+    quantity: Mapped[int] = mapped_column(default=1)
+    position: Mapped[Optional[float]] = mapped_column(Float)  # For ordering/hierarchy
+
+    # For injection molded components
+    component_part_id: Mapped[Optional[int]] = mapped_column(ForeignKey('parts.id'))
+    component_part: Mapped[Optional['Part']] = relationship('Part', foreign_keys=[component_part_id])
+
+    # For purchased/takeover components
+    component_name: Mapped[Optional[str]] = mapped_column(String(200))
+    component_material: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Join method details
+    join_method: Mapped[str] = mapped_column(String(20), default='none')
+    join_quantity: Mapped[int] = mapped_column(default=0)
+    join_detail: Mapped[Optional[str]] = mapped_column(String(500))
+
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    def __repr__(self):
+        return f"<AssemblyComponent(id={self.id}, type={self.component_type}, qty={self.quantity})>"
+
+
+class AssemblyProcessStep(Base):
+    """Manufacturing process step for assembly."""
+    __tablename__ = 'assembly_process_steps'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assembly_id: Mapped[int] = mapped_column(ForeignKey('parts.id'))
+    step_number: Mapped[int] = mapped_column()
+    description: Mapped[Optional[str]] = mapped_column(String(500))
+    process_type: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    components_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON: {component_id: quantity}
+
+    def __repr__(self):
+        return f"<AssemblyProcessStep(id={self.id}, asm={self.assembly_id}, step={self.step_number})>"
+
+    def get_components(self) -> dict:
+        """Parse components_json and return as dict."""
+        import json
+        if not self.components_json:
+            return {}
+        try:
+            return json.loads(self.components_json)
+        except:
+            return {}
+
+    def set_components(self, components_dict: dict):
+        """Store components dict as JSON."""
+        import json
+        self.components_json = json.dumps(components_dict) if components_dict else None
 
 
 # Alias for junction table
