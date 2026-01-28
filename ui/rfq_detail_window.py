@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QMessageBox, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QScrollArea, QFrame, QSpinBox,
-    QTreeWidget, QTreeWidgetItem, QCheckBox
+    QTreeWidget, QTreeWidgetItem, QCheckBox, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QMimeData, QByteArray, QPoint, QSize
 from PyQt6.QtGui import QPixmap, QIcon, QColor, QDrag
@@ -454,6 +454,15 @@ class RFQDetailWindow(QMainWindow):
         # Tab 3: Assembly Lines (assembly-only tree for manufacturing engineer)
         asm_tab = QWidget()
         asm_layout = QVBoxLayout(asm_tab)
+
+        # Process steps display (above tree, full width)
+        self.process_steps_display = QPlainTextEdit()
+        self.process_steps_display.setReadOnly(True)
+        self.process_steps_display.setPlaceholderText("Select an assembly to view its process steps")
+        self.process_steps_display.setMaximumHeight(120)
+        self.process_steps_display.setStyleSheet("background-color: #90C890; border: 1px solid #888; font-family: monospace; font-size: 10pt;")
+        asm_layout.addWidget(self.process_steps_display)
+
         self.assembly_tree = DroppableAssemblyLinesTree()
         self.assembly_tree.set_rfq_window(self)
         self.assembly_tree.setColumnCount(8)
@@ -470,7 +479,6 @@ class RFQDetailWindow(QMainWindow):
         self.assembly_tree.setColumnWidth(7, 80)
         self.assembly_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assembly_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.assembly_tree.setUniformRowHeights(False)  # Allow variable row heights for process steps
         self.assembly_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.assembly_tree.customContextMenuRequested.connect(self._on_assembly_tree_context_menu)
         self.assembly_tree.doubleClicked.connect(self._on_assembly_tree_double_clicked)
@@ -848,9 +856,6 @@ class RFQDetailWindow(QMainWindow):
 
                     self.parts_tree.addTopLevelItem(asm_item)
 
-                    # Add process steps after assembly (at root level)
-                    self._add_process_steps_to_tree(self.parts_tree, asm_item, part, session)
-
                 elif part.id not in assembly_part_ids:
                     # Only show as standalone if NOT used in any assembly
                     part_item = QTreeWidgetItem()
@@ -971,89 +976,6 @@ class RFQDetailWindow(QMainWindow):
                 item.setBackground(col, QColor("#B0B0B0"))
             item.setData(0, Qt.ItemDataRole.UserRole, component.id)
             item.setData(0, Qt.ItemDataRole.UserRole + 1, "component_takeover")
-
-    def _add_process_steps_to_tree(self, tree, asm_item: QTreeWidgetItem, part, session):
-        """Add process steps as children of assembly (so they collapse/expand together)."""
-        steps = session.query(AssemblyProcessStep).filter(
-            AssemblyProcessStep.assembly_id == part.id
-        ).order_by(AssemblyProcessStep.step_number).all()
-
-        if not steps:
-            return
-
-        # Separator row (child of assembly, full width)
-        sep_item = QTreeWidgetItem()
-        sep_item.setText(0, "│ ── Process Steps ──")
-        font = sep_item.font(0)
-        font.setItalic(True)
-        sep_item.setFont(0, font)
-        sep_item.setForeground(0, QColor("#808080"))
-        sep_item.setBackground(0, QColor("#4a4a4a"))
-        sep_item.setFlags(sep_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        # Make separator span all columns too
-        sep_item.setFirstColumnSpanned(True)
-        asm_item.addChild(sep_item)
-
-        # Each step (child of assembly, renders as full-width custom label)
-        for step in steps:
-            step_item = QTreeWidgetItem()
-
-            # Format: "1. │ Assemble: Part1 x1, Part2 x2"
-            process_label = step.process_type.replace("_", " ").title()
-            comp_parts = []
-            components_dict = step.get_components()
-            if components_dict:
-                for comp_id_str, qty in components_dict.items():
-                    try:
-                        comp_id = int(comp_id_str)
-                        comp = session.query(AssemblyComponent).get(comp_id)
-                        if comp:
-                            comp_name = self._format_component_name_short(comp)
-                            comp_parts.append(f"{comp_name} x{qty}")
-                    except:
-                        pass
-
-            # Build full text with line wrapping for long component lists
-            comp_text = ", ".join(comp_parts) if comp_parts else ""
-            step_header = f"{step.step_number}. │ {process_label}:"
-
-            # If components list is long, break into multiple lines
-            if len(comp_text) > 80:
-                lines = [step_header]
-                current_line = "    "
-                for comp in comp_parts:
-                    if len(current_line) + len(comp) + 2 > 110:
-                        lines.append(current_line.rstrip(", "))
-                        current_line = "      "
-                    current_line += comp + ", "
-                if current_line.strip():
-                    lines.append(current_line.rstrip(", "))
-                step_text = "\n".join(lines)
-            else:
-                step_text = f"{step_header} {comp_text}"
-
-            # Create full-width label widget (bypasses column layout)
-            label = QLabel(step_text)
-            label.setStyleSheet("background-color: #90C890; padding: 5px; margin: 0px; border: none;")
-            label.setWordWrap(True)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            if step.notes:
-                label.setToolTip(step.notes)
-
-            # Calculate height based on wrapped text
-            num_lines = step_text.count("\n") + 1
-            height = 20 + (num_lines - 1) * 18
-
-            step_item.setData(0, Qt.ItemDataRole.UserRole, step.id)
-            step_item.setData(0, Qt.ItemDataRole.UserRole + 1, "process_step")
-            # Make item span all columns for full width
-            step_item.setFirstColumnSpanned(True)
-            step_item.setSizeHint(0, QSize(tree.width() - 20, height))
-
-            # Add as child of assembly (collapses/expands with it)
-            asm_item.addChild(step_item)
-            # Use custom widget for full-width rendering
-            tree.setItemWidget(step_item, 0, label)
 
     def _format_component_name_short(self, comp: AssemblyComponent) -> str:
         """Format component name briefly for display."""
@@ -1222,9 +1144,6 @@ class RFQDetailWindow(QMainWindow):
                             self._style_component_item(child_item, comp, session)
 
                 self.assembly_tree.addTopLevelItem(asm_item)
-
-                # Add process steps after assembly (at root level)
-                self._add_process_steps_to_tree(self.assembly_tree, asm_item, part, session)
 
     def _format_cavities_display(self, tool: Tool) -> str:
         """Format cavities display as 'cav1/cav2/...' and check for imbalance."""
@@ -2362,16 +2281,24 @@ class RFQDetailWindow(QMainWindow):
             self._on_edit_process_step(item_id)
 
     def _on_assembly_tree_clicked(self, index):
-        """Handle click on assembly lines tree items (for image preview in column 1)."""
-        if index.column() != 1:
-            return
-
+        """Handle click on assembly lines tree items (for image preview in column 1 and process steps display)."""
         item = self.assembly_tree.itemFromIndex(index)
-        if not item or not item.icon(1) or item.icon(1).isNull():
+        if not item:
             return
 
         item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
         item_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        # Show process steps for selected assembly
+        if item_type == "assembly":
+            self._update_process_steps_display(item_id)
+
+        # Handle image preview on column 1 click
+        if index.column() != 1:
+            return
+
+        if not item.icon(1) or item.icon(1).isNull():
+            return
 
         with session_scope() as session:
             if item_type == "assembly":
@@ -2384,6 +2311,47 @@ class RFQDetailWindow(QMainWindow):
                 if component and component.component_part and component.component_part.image_binary:
                     from ui.widgets.image_preview import show_image_preview
                     show_image_preview(self, f"Part: {component.component_part.name}", component.component_part.image_binary)
+
+    def _update_process_steps_display(self, assembly_id: int):
+        """Update process steps display for selected assembly."""
+        with session_scope() as session:
+            steps = session.query(AssemblyProcessStep).filter(
+                AssemblyProcessStep.assembly_id == assembly_id
+            ).order_by(AssemblyProcessStep.step_number).all()
+
+            if not steps:
+                self.process_steps_display.setPlainText("")
+                return
+
+            # Build text display
+            lines = []
+            for step in steps:
+                process_label = step.process_type.replace("_", " ").title()
+                comp_parts = []
+                components_dict = step.get_components()
+                if components_dict:
+                    for comp_id_str, qty in components_dict.items():
+                        try:
+                            comp_id = int(comp_id_str)
+                            comp = session.query(AssemblyComponent).get(comp_id)
+                            if comp:
+                                comp_name = self._format_component_name_short(comp)
+                                comp_parts.append(f"{comp_name} x{qty}")
+                        except:
+                            pass
+
+                comp_text = ", ".join(comp_parts) if comp_parts else ""
+                step_header = f"{step.step_number}. {process_label}:"
+
+                if comp_text:
+                    lines.append(f"{step_header} {comp_text}")
+                else:
+                    lines.append(step_header)
+
+                if step.notes:
+                    lines.append(f"   Notes: {step.notes}")
+
+            self.process_steps_display.setPlainText("\n".join(lines))
 
     def _on_move_component(self, component_id: int):
         """Show dialog to move component to another assembly."""
