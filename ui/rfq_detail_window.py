@@ -808,11 +808,11 @@ class RFQDetailWindow(QMainWindow):
                     asm_item = QTreeWidgetItem()
                     asm_item.setText(0, f"🗂 {part.name}")  # Assembly icon
 
-                    # Add image if available (column 1)
+                    # Add image if available (column 1) - scale to match row height
                     if part.image_binary:
                         pixmap = QPixmap()
                         pixmap.loadFromData(part.image_binary)
-                        scaled = pixmap.scaledToHeight(30, Qt.TransformationMode.SmoothTransformation)
+                        scaled = pixmap.scaledToHeight(45, Qt.TransformationMode.SmoothTransformation)
                         asm_item.setIcon(1, QIcon(scaled))
 
                     asm_item.setText(2, part.part_number or "-")
@@ -845,7 +845,7 @@ class RFQDetailWindow(QMainWindow):
                         for comp in sorted_comps:
                             if comp.component_type == "injection_molded":
                                 child_item = QTreeWidgetItem(asm_item)
-                                self._style_component_item(child_item, comp, session)
+                                self._style_component_item(child_item, comp, session, apply_colors=False)
                                 # Store the item by its integer position
                                 if comp.position is not None:
                                     im_pos = int(comp.position)
@@ -867,7 +867,7 @@ class RFQDetailWindow(QMainWindow):
                                     child_item = QTreeWidgetItem(parent_item)
                                 else:
                                     child_item = QTreeWidgetItem(asm_item)
-                                self._style_component_item(child_item, comp, session)
+                                self._style_component_item(child_item, comp, session, apply_colors=False)
 
                     self.parts_tree.addTopLevelItem(asm_item)
                     # Process steps MUST be added after asm_item is in the tree
@@ -878,11 +878,11 @@ class RFQDetailWindow(QMainWindow):
                     part_item = QTreeWidgetItem()
                     part_item.setText(0, f"📦 {part.name}")  # IM part icon, NO indentation - top level like assembly
 
-                    # Add image if available (column 1)
+                    # Add image if available (column 1) - scale to match row height
                     if part.image_binary:
                         pixmap = QPixmap()
                         pixmap.loadFromData(part.image_binary)
-                        scaled = pixmap.scaledToHeight(30, Qt.TransformationMode.SmoothTransformation)
+                        scaled = pixmap.scaledToHeight(45, Qt.TransformationMode.SmoothTransformation)
                         part_item.setIcon(1, QIcon(scaled))
 
                     part_item.setText(2, part.part_number or "-")
@@ -906,29 +906,29 @@ class RFQDetailWindow(QMainWindow):
                     part_item.setData(0, Qt.ItemDataRole.UserRole, part.id)
                     part_item.setData(0, Qt.ItemDataRole.UserRole + 1, "im_part")
 
-                    # Apply styling: yellow background
-                    for col in range(8):
-                        part_item.setBackground(col, QColor("#F0B840"))
-
                     # Apply red text if incomplete
                     if len(missing) > 0:
                         part_item.setForeground(0, QColor("#FF5050"))
 
                     self.parts_tree.addTopLevelItem(part_item)
 
-    def _style_component_item(self, item: QTreeWidgetItem, component: AssemblyComponent, session):
-        """Style a component tree item based on type (IM, purchased, takeover)."""
+    def _style_component_item(self, item: QTreeWidgetItem, component: AssemblyComponent, session, apply_colors=False):
+        """Style a component tree item based on type (IM, purchased, takeover).
+
+        Args:
+            apply_colors: If True, applies background colors. Set to False for Master BOM, True for Assembly tree.
+        """
         from ui.color_coding import get_missing_fields
 
         if component.component_type == "injection_molded" and component.component_part:
             # IM part component - yellow, indented under assembly
             item.setText(0, f"    └─ {component.component_part.name}")
 
-            # Add image if available
+            # Add image if available - scale to match row height
             if component.component_part.image_binary:
                 pixmap = QPixmap()
                 pixmap.loadFromData(component.component_part.image_binary)
-                scaled = pixmap.scaledToHeight(25, Qt.TransformationMode.SmoothTransformation)
+                scaled = pixmap.scaledToHeight(45, Qt.TransformationMode.SmoothTransformation)
                 item.setIcon(1, QIcon(scaled))
 
             item.setText(2, component.component_part.part_number or "-")
@@ -951,8 +951,9 @@ class RFQDetailWindow(QMainWindow):
                 item.setForeground(7, QColor("#FF5050"))
                 item.setForeground(0, QColor("#FF5050"))
 
-            for col in range(8):
-                item.setBackground(col, QColor("#F0B840"))
+            if apply_colors:
+                for col in range(8):
+                    item.setBackground(col, QColor("#F0B840"))
             item.setData(0, Qt.ItemDataRole.UserRole, component.id)
             item.setData(0, Qt.ItemDataRole.UserRole + 1, "component_im")
 
@@ -970,8 +971,9 @@ class RFQDetailWindow(QMainWindow):
             item.setText(6, join_method_label)
             item.setText(7, "✓")
 
-            for col in range(8):
-                item.setBackground(col, QColor("#E04040"))
+            if apply_colors:
+                for col in range(8):
+                    item.setBackground(col, QColor("#E04040"))
             item.setData(0, Qt.ItemDataRole.UserRole, component.id)
             item.setData(0, Qt.ItemDataRole.UserRole + 1, "component_purchased")
 
@@ -989,8 +991,9 @@ class RFQDetailWindow(QMainWindow):
             item.setText(6, join_method_label)
             item.setText(7, "✓")
 
-            for col in range(8):
-                item.setBackground(col, QColor("#B0B0B0"))
+            if apply_colors:
+                for col in range(8):
+                    item.setBackground(col, QColor("#B0B0B0"))
             item.setData(0, Qt.ItemDataRole.UserRole, component.id)
             item.setData(0, Qt.ItemDataRole.UserRole + 1, "component_takeover")
 
@@ -1222,7 +1225,7 @@ class RFQDetailWindow(QMainWindow):
                     for comp in sorted_comps:
                         if comp.component_type == "injection_molded":
                             child_item = QTreeWidgetItem(asm_item)
-                            self._style_component_item(child_item, comp, session)
+                            self._style_component_item(child_item, comp, session, apply_colors=True)
                             # Store the item by its integer position
                             if comp.position is not None:
                                 im_pos = int(comp.position)
@@ -1244,7 +1247,7 @@ class RFQDetailWindow(QMainWindow):
                                 child_item = QTreeWidgetItem(parent_item)
                             else:
                                 child_item = QTreeWidgetItem(asm_item)
-                            self._style_component_item(child_item, comp, session)
+                            self._style_component_item(child_item, comp, session, apply_colors=True)
 
                 self.assembly_tree.addTopLevelItem(asm_item)
                 # Process steps MUST be added after asm_item is in the tree
