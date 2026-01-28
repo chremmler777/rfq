@@ -459,9 +459,13 @@ class RFQDetailWindow(QMainWindow):
         self.process_steps_display = QPlainTextEdit()
         self.process_steps_display.setReadOnly(True)
         self.process_steps_display.setPlaceholderText("Select an assembly to view its process steps")
-        self.process_steps_display.setMaximumHeight(120)
-        self.process_steps_display.setStyleSheet("background-color: #90C890; border: 1px solid #888; font-family: monospace; font-size: 10pt;")
+        self.process_steps_display.setMaximumHeight(140)
+        self.process_steps_display.setMinimumHeight(50)
+        self.process_steps_display.setStyleSheet("background-color: #90C890; border: 1px solid #666; padding: 8px; font-family: monospace; font-size: 10pt; color: #333;")
+        asm_layout.addWidget(QLabel("Process Steps:"), 0)
         asm_layout.addWidget(self.process_steps_display)
+        # Connect selection model to update on any selection change
+        self.assembly_tree.selectionModel().selectionChanged.connect(self._on_assembly_tree_selection_changed)
 
         self.assembly_tree = DroppableAssemblyLinesTree()
         self.assembly_tree.set_rfq_window(self)
@@ -2352,6 +2356,25 @@ class RFQDetailWindow(QMainWindow):
                     lines.append(f"   Notes: {step.notes}")
 
             self.process_steps_display.setPlainText("\n".join(lines))
+
+    def _on_assembly_tree_selection_changed(self, selected, deselected):
+        """Update process steps display when selection changes in assembly tree."""
+        if not selected.indexes():
+            self.process_steps_display.setPlainText("")
+            return
+
+        index = selected.indexes()[0]
+        item = self.assembly_tree.itemFromIndex(index)
+        if not item:
+            return
+
+        item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        item_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        if item_type == "assembly":
+            self._update_process_steps_display(item_id)
+        else:
+            self.process_steps_display.setPlainText("")
 
     def _on_move_component(self, component_id: int):
         """Show dialog to move component to another assembly."""
