@@ -423,8 +423,9 @@ class RFQDetailWindow(QMainWindow):
         self.parts_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.parts_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.parts_tree.setUniformRowHeights(False)  # Allow variable row heights for process steps
-        # Increase row height for better image visibility via stylesheet
-        self.parts_tree.setStyleSheet("QTreeWidget::item { height: 50px; }")
+        # Balanced row height with larger font for better space usage
+        self.parts_tree.setStyleSheet("QTreeWidget::item { height: 35px; font-size: 11pt; }")
+        self.parts_tree.setFont(self.parts_tree.font())
         self.parts_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.parts_tree.customContextMenuRequested.connect(self._on_parts_context_menu)
         self.parts_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
@@ -473,8 +474,9 @@ class RFQDetailWindow(QMainWindow):
         self.assembly_tree.setColumnWidth(7, 80)
         self.assembly_tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assembly_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # Increase row height for image visibility via stylesheet
-        self.assembly_tree.setStyleSheet("QTreeWidget::item { height: 50px; }")
+        # Balanced row height with larger font for better space usage
+        self.assembly_tree.setStyleSheet("QTreeWidget::item { height: 35px; font-size: 11pt; }")
+        self.assembly_tree.setFont(self.assembly_tree.font())
         self.assembly_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.assembly_tree.customContextMenuRequested.connect(self._on_assembly_tree_context_menu)
         self.assembly_tree.doubleClicked.connect(self._on_assembly_tree_double_clicked)
@@ -812,7 +814,7 @@ class RFQDetailWindow(QMainWindow):
                     if part.image_binary:
                         pixmap = QPixmap()
                         pixmap.loadFromData(part.image_binary)
-                        scaled = pixmap.scaledToHeight(45, Qt.TransformationMode.SmoothTransformation)
+                        scaled = pixmap.scaledToHeight(30, Qt.TransformationMode.SmoothTransformation)
                         asm_item.setIcon(1, QIcon(scaled))
 
                     asm_item.setText(2, part.part_number or "-")
@@ -882,7 +884,7 @@ class RFQDetailWindow(QMainWindow):
                     if part.image_binary:
                         pixmap = QPixmap()
                         pixmap.loadFromData(part.image_binary)
-                        scaled = pixmap.scaledToHeight(45, Qt.TransformationMode.SmoothTransformation)
+                        scaled = pixmap.scaledToHeight(30, Qt.TransformationMode.SmoothTransformation)
                         part_item.setIcon(1, QIcon(scaled))
 
                     part_item.setText(2, part.part_number or "-")
