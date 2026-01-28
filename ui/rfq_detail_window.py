@@ -487,6 +487,8 @@ class RFQDetailWindow(QMainWindow):
         self.assembly_tree.clicked.connect(self._on_assembly_tree_clicked)
         self.assembly_tree.expanded.connect(self._on_item_manually_expanded)
         self.assembly_tree.collapsed.connect(self._on_item_manually_collapsed)
+        # Connect to selection changes to update process steps display
+        self.assembly_tree.itemSelectionChanged.connect(self._on_assembly_tree_selection_changed_direct)
         self.asm_no_data_label = QLabel("No assemblies defined. Create assemblies in the Master BOM tab.")
         self.asm_no_data_label.setStyleSheet("font-size: 11pt; color: #888; padding: 20px;")
         self.asm_no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2366,6 +2368,22 @@ class RFQDetailWindow(QMainWindow):
         if not item:
             return
 
+        item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        item_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        if item_type == "assembly":
+            self._update_process_steps_display(item_id)
+        else:
+            self.process_steps_display.setPlainText("")
+
+    def _on_assembly_tree_selection_changed_direct(self):
+        """Update process steps display when selection changes (no parameters)."""
+        selected_items = self.assembly_tree.selectedItems()
+        if not selected_items:
+            self.process_steps_display.setPlainText("")
+            return
+
+        item = selected_items[0]
         item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
         item_id = item.data(0, Qt.ItemDataRole.UserRole)
 
